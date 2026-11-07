@@ -156,7 +156,11 @@ int main() {
 	CHECK(CanonicalPath(std::filesystem::absolute("res/models/pawn.obj")) == "res/models/pawn.obj");
 	CHECK(RelativeToFile("res/models/pawn.obj", "build/scene.json") == "../res/models/pawn.obj");
 	CHECK(ResolveFromFile("../res/models/pawn.obj", "build/scene.json") == "res/models/pawn.obj");
+#ifdef _WIN32
+	CHECK(ResolveFromFile("C:/abs/model.obj", "build/scene.json") == "C:/abs/model.obj"); // su Windows un path assoluto ha il drive
+#else
 	CHECK(ResolveFromFile("/abs/model.obj", "build/scene.json") == "/abs/model.obj");
+#endif
 
 	Document document;
 	document.New(doc, docAssets, docSettings);

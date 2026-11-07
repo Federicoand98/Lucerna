@@ -756,7 +756,7 @@ namespace Lucerna {
 		const float content = std::max(1.0f, contentX);
 		m_UiScale = std::max(1.0f, content / m_FramebufferScale);
 		const int platform = glfwGetPlatform();
-		std::cout << "Window: " << (platform == GLFW_PLATFORM_WAYLAND ? "wayland" : platform == GLFW_PLATFORM_X11 ? "x11" : "other")
+		std::cout << "Window: " << (platform == GLFW_PLATFORM_WAYLAND ? "wayland" : platform == GLFW_PLATFORM_X11 ? "x11" : platform == GLFW_PLATFORM_WIN32 ? "win32" : "other")
 		          << (m_CustomTitleBar ? ", app title bar" : ", system title bar")
 		          << ", content scale " << content << ", framebuffer scale " << m_FramebufferScale
 		          << ", cursor theme " << (getenv("XCURSOR_THEME") ? getenv("XCURSOR_THEME") : "default")

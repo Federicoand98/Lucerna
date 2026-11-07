@@ -29,6 +29,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 add_compile_definitions(LUCERNA_RESOURCE_DIR="${RES_DIR}" LUCERNA_SHADER_DIR="${SPV_DIR}")
 
+# Windows: windows.h (incluso da portable-file-dialogs e GLFW) definisce le macro min/max, che
+# rompono std::min/glm::min. MSVC vuole anche /utf-8 (le icone sono stringhe UTF-8), /bigobj per
+# i file grandi e un build parallelo.
+if(WIN32)
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+endif()
+if(MSVC)
+  add_compile_options(/utf-8 /bigobj /MP /Zc:__cplusplus)
+endif()
+
 find_package(Vulkan REQUIRED)
 # GLFW 3.5.1 dal submodule deps/glfw, con una patch che aggiunge glfwStartInteractiveMove e
 # glfwStartInteractiveResize (la barra del titolo disegnata dall'app, ADR 0021). Il submodule
