@@ -4,6 +4,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "imgui_internal.h"
 #include "Editor/Input.h"
+#include "Editor/Icons.h"
+#include "Editor/Theme.h"
+#include "Editor/Widgets.h"
 #include "Core/Random.h"
 #include "Serialization/SceneSerializer.h"
 #include <functional>
@@ -21,16 +24,6 @@ namespace Lucerna {
 	static Application* s_Instance = nullptr;
 
 	namespace {
-		// Il dockspace copre l'intera viewport, quindi io.WantCaptureMouse sarebbe sempre
-		// vero e il picking non scatterebbe mai. Non possiamo pero' riconoscere il
-		// dockspace dal nome: quando il mouse e' su un dock node, ImGui riporta una
-		// finestra host interna con nome generato ("DockSpace Demo/DockSpace_0000001A").
-		// Usiamo invece i flag: il dockspace ha NoBringToFrontOnFocus, i pannelli no.
-		const char* HoveredWindowName() {
-			ImGuiWindow* hovered = ImGui::GetCurrentContext()->HoveredWindow;
-			return hovered ? hovered->Name : "(none)";
-		}
-
 		// Proietta un punto world sullo schermo. Ritorna false se sta dietro la camera:
 		// dividere per una w negativa produrrebbe un punto ribaltato davanti all'occhio.
 		bool WorldToScreen(const glm::mat4& viewProjection, const glm::vec3& point,
@@ -45,10 +38,6 @@ namespace Lucerna {
 			return true;
 		}
 
-		void DrawTextWithShadow(ImDrawList* drawList, const ImVec2& pos, ImU32 color, const char* text) {
-			drawList->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f), IM_COL32(0, 0, 0, 200), text);
-			drawList->AddText(pos, color, text);
-		}
 	}
 
 	Application::Application() : m_Window(nullptr), m_Height(900), m_Width(1600), m_IsRunning(true),
@@ -140,14 +129,13 @@ namespace Lucerna {
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewport / Platform Windows
 
-		// Setup Dear ImGui style
-		ImGui::StyleColorsDark();
-
-		ImGuiStyle& style = ImGui::GetStyle();
-		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-			style.WindowRounding = 0.0f;
-			style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-		}
+		// L'aspetto del redesign (concept A): font, palette e spaziature alla scala del monitor
+		float scaleX = 1.0f, scaleY = 1.0f;
+		glfwGetWindowContentScale(m_Window, &scaleX, &scaleY);
+		m_UiScale = std::max(1.0f, scaleX);
+		const Theme::Fonts fonts = Theme::LoadFonts(m_UiScale);
+		Theme::Apply(m_UiScale);
+		UI::Configure(fonts, m_UiScale);
 
 		ImGui_ImplGlfw_InitForVulkan(m_Window, true);
 
@@ -221,6 +209,7 @@ namespace Lucerna {
 
 			// Prima del dockspace: la barra di menu riduce l'area di lavoro che il dockspace occupa
 			DrawMainMenu();
+			DrawStatusBar();
 			HandleShortcuts();
 
 			{
@@ -248,14 +237,18 @@ namespace Lucerna {
 				ImGuiIO& io = ImGui::GetIO();
 				if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
 					ImGuiID dockspace_id = ImGui::GetID("OpenGL Dockspace"); // il nome resta: e' la chiave del layout salvato in imgui.ini
+					// Il layout del concept A la prima volta che i suoi pannelli compaiono (un
+					// imgui.ini di prima non li conosce), e quando lo si chiede dal menu View
+					if (m_ResetLayout || ImGui::FindWindowSettingsByID(ImHashStr("Outliner")) == nullptr)
+						BuildDefaultLayout(dockspace_id);
+					m_ResetLayout = false;
 					ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 				}
 
 				ImGui::End();
 			}
 
-			// Rendering
-			// RenderUI disegna la finestra "Viewport", e con essa overlay e gizmo
+			// I pannelli; la finestra "Viewport" disegna anche overlay, HUD e gizmo
 			RenderUI(m_DeltaTime);
 			UpdateSelection();
 			// dopo UpdateSelection: e' li' che Canc chiama OpenPopup, cosi' la modale
@@ -440,10 +433,13 @@ namespace Lucerna {
 	void Application::DrawMainMenu() {
 		if (!ImGui::BeginMainMenuBar())
 			return;
+		ImGui::PushFont(UI::BoldFont());
+		ImGui::TextColored(Theme::Accent, "Lucerna");
+		ImGui::PopFont();
 		if (ImGui::BeginMenu("File")) {
-			if (ImGui::MenuItem("New", "Ctrl+N"))
+			if (ImGui::MenuItem(ICON_NEW " New", "Ctrl+N"))
 				WhenSaved([this] { NewDocument(); });
-			if (ImGui::MenuItem("Open...", "Ctrl+O"))
+			if (ImGui::MenuItem(ICON_OPEN " Open...", "Ctrl+O"))
 				ShowOpenDialog();
 			if (ImGui::BeginMenu("Open Recent")) {
 				// un file che non c'e' piu' sparisce dall'elenco
@@ -467,15 +463,29 @@ namespace Lucerna {
 				ImGui::EndMenu();
 			}
 			ImGui::Separator();
-			if (ImGui::MenuItem("Save", "Ctrl+S"))
+			if (ImGui::MenuItem(ICON_SAVE " Save", "Ctrl+S"))
 				SaveDocument();
 			if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
 				SaveDocumentAs();
+			ImGui::Separator();
+			// il live-link riapre il file importato quando Blender lo riesporta (ADR 0003)
+			if (ImGui::MenuItem("Live-link", nullptr, &m_LiveLink, !m_WatchPath.empty())) {}
+			if (ImGui::MenuItem(ICON_SCREENSHOT " Save screenshot"))
+				m_ScreenshotRequested = true;
 			ImGui::Separator();
 			if (ImGui::MenuItem("Quit", "Ctrl+Q"))
 				WhenSaved([this] { m_IsRunning = false; });
 			ImGui::EndMenu();
 		}
+		DrawEditMenu();
+		DrawAddMenu();
+		DrawViewMenu();
+		DrawHelpMenu();
+
+		// il file aperto, a destra
+		const std::string name = m_Document.DisplayName() + (m_Document.IsModified(m_Scene, m_Assets, m_Renderer.Settings) ? "*" : "");
+		ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(name.c_str()).x - ImGui::GetStyle().ItemSpacing.x * 2);
+		ImGui::TextDisabled("%s", name.c_str());
 		ImGui::EndMainMenuBar();
 	}
 
@@ -578,233 +588,6 @@ namespace Lucerna {
 		m_IsRunning = false;
 	}
 
-	void Application::RenderUI(float deltaTime) {
-		ValidateSelection();
-
-		ImGui::Begin("Settings");
-
-		ImGui::Text("FPS: %.1f", m_FPS);
-		ImGui::SameLine();
-		ImGui::TextDisabled("| %.2f ms/frame", deltaTime * 1000.0f);
-		ImGui::SameLine();
-		ImGui::TextDisabled("| GPU PT %.2f DN %.2f ms", m_Renderer.GetPathTraceMs(), m_Renderer.GetDenoiseMs());
-		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80.0f);
-		if (ImGui::Button("Screenshot"))
-			m_ScreenshotRequested = true;
-
-		ImGui::Spacing();
-
-		if (ImGui::BeginTabBar("MainTabs")) {
-			if (ImGui::BeginTabItem("Scene")) {
-				DrawSceneTab();
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem("Materials")) {
-				DrawMaterialsTab();
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem("Render")) {
-				DrawRenderTab();
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem("Debug")) {
-				DrawDebugTab();
-				ImGui::EndTabItem();
-			}
-
-			ImGui::EndTabBar();
-		}
-
-		ImGui::End();
-
-		// finestra a se' stante: va aperta fuori dal Begin/End di "Settings"
-		DrawMaterialEditorWindow();
-
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-		ImGui::Begin("Viewport");
-		m_ViewportWidth = (uint32_t)ImGui::GetContentRegionAvail().x;
-		m_ViewportHeight = (uint32_t)ImGui::GetContentRegionAvail().y;
-
-		ImVec2 pos = ImGui::GetCursorScreenPos();
-		ImTextureID image = DisplayTexture();
-		if(image != 0)
-			ImGui::GetWindowDrawList()->AddImage(
-				image,
-				ImVec2(pos.x, pos.y),
-				ImVec2(pos.x + m_ViewportWidth, pos.y + m_ViewportHeight),
-				ImVec2(0, 1),
-				ImVec2(1, 0)
-			);
-
-		// rettangolo dell'immagine: a questo si ancorano picking, gizmo e overlay
-		m_ViewportPos = pos;
-		m_ViewportSize = ImVec2((float)m_ViewportWidth, (float)m_ViewportHeight);
-		m_ViewportHovered = ImGui::IsWindowHovered();
-
-		// disegnati QUI dentro, sulla draw list della finestra "Viewport": la background
-		// draw list starebbe sotto l'immagine e non si vedrebbe nulla
-		DrawSelectionOverlay();
-		DrawGizmo();
-
-		ImGui::End();
-		ImGui::PopStyleVar();
-	}
-
-	// ---------------------------------------------------------------- UI: tab Scene
-
-	void Application::DrawSceneTab() {
-		ImGui::Spacing();
-
-		// Il file aperto: aprire, salvare e le scene integrate stanno nel menu File
-		ImGui::Text("%s%s", m_Document.DisplayName().c_str(), m_Document.IsModified(m_Scene, m_Assets, m_Renderer.Settings) ? " (modified)" : "");
-		if (!m_Document.Path().empty())
-			ImGui::TextDisabled("%s", m_Document.Path().c_str());
-		if (!m_WatchPath.empty())
-			ImGui::Checkbox("Live-link", &m_LiveLink);
-
-		{
-			bool environment = m_Scene.EnvironmentMapping();
-			glm::vec3 background = m_Scene.BackgroundColor();
-			bool changed = ImGui::Checkbox("Environment Mapping", &environment);
-			if (!environment)
-				changed |= ImGui::ColorEdit3("Background", glm::value_ptr(background));
-			if (changed)
-				m_Scene.SetBackground(background, environment);
-		}
-
-		ImGui::SeparatorText("Sun");
-		{
-			SunParams sun = m_Scene.Sun();
-			bool changed = ImGui::Checkbox("Sun enabled", &sun.Enabled);
-			if (sun.Enabled) {
-				changed |= ImGui::SliderFloat("Elevation", &sun.Elevation, -90.0f, 90.0f, "%.1f deg");
-				changed |= ImGui::SliderFloat("Azimuth", &sun.Azimuth, 0.0f, 360.0f, "%.1f deg");
-				changed |= ImGui::SliderFloat("Angular radius", &sun.AngularRadius, 0.01f, 5.0f, "%.2f deg", ImGuiSliderFlags_Logarithmic);
-				changed |= ImGui::ColorEdit3("Sun color", glm::value_ptr(sun.Color));
-				changed |= ImGui::DragFloat("Irradiance", &sun.Irradiance, 0.05f, 0.0f, 1000.0f, "%.2f");
-			}
-			if (changed)
-				m_Scene.SetSun(sun);
-		}
-
-		ImGui::SeparatorText("Add");
-		DrawAddObjectMenu();
-
-		ImGui::SeparatorText("Outliner");
-		DrawOutliner();
-
-		ImGui::SeparatorText("Properties");
-		DrawSelectionProperties();
-	}
-
-	void Application::DrawOutliner() {
-		// I 6 quad che compongono un box vivono ANCHE in Quads: elencarli entrambi
-		// riempirebbe l'outliner di duplicati (Random Boxes ha 121 box = 726 quad).
-		// Le facce si selezionano tramite il box che le possiede.
-		std::vector<bool> quadOwnedByBox(m_Scene.Quads().size(), false);
-		for (const Box& box : m_Scene.Boxes()) {
-			int first = static_cast<int>(box.index);
-			for (int q = first; q < first + 6 && q < (int)m_Scene.Quads().size(); q++)
-				quadOwnedByBox[q] = true;
-		}
-
-		const size_t standaloneQuads = std::count(quadOwnedByBox.begin(), quadOwnedByBox.end(), false);
-		const bool empty = m_Scene.Spheres().empty() && m_Scene.Boxes().empty()
-						&& standaloneQuads == 0 && m_Scene.Meshes().empty() && m_Scene.PunctualLights().empty();
-
-		ImGui::BeginChild("OutlinerList", ImVec2(0.0f, 190.0f), true);
-
-		if (empty)
-			ImGui::TextDisabled("empty scene");
-
-		if (!m_Scene.Spheres().empty() && ImGui::TreeNodeEx("spheres", ImGuiTreeNodeFlags_DefaultOpen, "Spheres (%zu)", m_Scene.Spheres().size())) {
-			for (size_t i = 0; i < m_Scene.Spheres().size(); i++)
-				SelectableObjectRow(m_Scene.Spheres()[i].Name.c_str(), SelectionType::Sphere, (int)i, m_Assets.Materials().IndexOf(m_Scene.Spheres()[i].Material));
-			ImGui::TreePop();
-		}
-
-		if (!m_Scene.Boxes().empty() && ImGui::TreeNodeEx("boxes", ImGuiTreeNodeFlags_DefaultOpen, "Boxes (%zu)", m_Scene.Boxes().size())) {
-			for (size_t i = 0; i < m_Scene.Boxes().size(); i++)
-				SelectableObjectRow(m_Scene.Boxes()[i].Name.c_str(), SelectionType::Box, (int)i, m_Assets.Materials().IndexOf(m_Scene.Boxes()[i].Material));
-			ImGui::TreePop();
-		}
-
-		if (standaloneQuads > 0 && ImGui::TreeNodeEx("quads", ImGuiTreeNodeFlags_DefaultOpen, "Quads (%zu)", standaloneQuads)) {
-			for (size_t i = 0; i < m_Scene.Quads().size(); i++) {
-				if (quadOwnedByBox[i])
-					continue; // faccia di un box
-
-				SelectableObjectRow(m_Scene.Quads()[i].Name.c_str(), SelectionType::Quad, (int)i, m_Assets.Materials().IndexOf(m_Scene.Quads()[i].Material));
-			}
-			ImGui::TreePop();
-		}
-
-		if (!m_Scene.Meshes().empty() && ImGui::TreeNodeEx("meshes", ImGuiTreeNodeFlags_DefaultOpen, "Meshes (%zu)", m_Scene.Meshes().size())) {
-			for (size_t i = 0; i < m_Scene.Meshes().size(); i++) {
-				SelectableObjectRow(m_Scene.Meshes()[i].Name.c_str(), SelectionType::Mesh, (int)i, m_Assets.Materials().IndexOf(m_Scene.Meshes()[i].Material));
-			}
-			ImGui::TreePop();
-		}
-
-		if (!m_Scene.PunctualLights().empty() && ImGui::TreeNodeEx("lights", ImGuiTreeNodeFlags_DefaultOpen, "Lights (%zu)", m_Scene.PunctualLights().size())) {
-			for (size_t i = 0; i < m_Scene.PunctualLights().size(); i++)
-				SelectableObjectRow(m_Scene.PunctualLights()[i].Name.c_str(), SelectionType::Light, (int)i, -1);
-			ImGui::TreePop();
-		}
-
-		ImGui::EndChild();
-	}
-
-	// Una riga dell'outliner: cliccarla equivale a cliccare l'oggetto nella viewport,
-	// cosi' selezione, gizmo e contorno restano un'unica nozione.
-	bool Application::SelectableObjectRow(const char* label, SelectionType type, int index, int materialIndex) {
-		ImGui::PushID(static_cast<int>(type) * 100000 + index);
-
-		const bool selected = (m_Selection.Type == type && SelectedIndex() == index);
-
-		char row[160];
-		snprintf(row, sizeof(row), "%s", label);
-
-		const bool clicked = ImGui::Selectable(row, selected);
-
-		if (materialIndex >= 0) { // le luci non hanno materiale
-			ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
-			ImGui::TextDisabled("m%d", materialIndex);
-		}
-
-		if (clicked) {
-			m_Selection = Select(type, index);
-			m_GizmoOperation = ImGuizmo::TRANSLATE;
-		}
-
-		ImGui::PopID();
-		return clicked;
-	}
-
-	void Application::DrawGizmoToolbar() {
-		const ImGuizmo::OPERATION effective = EffectiveGizmoOperation();
-
-		auto operationButton = [&](const char* label, ImGuizmo::OPERATION operation, bool enabled) {
-			const bool active = (effective == operation);
-			if (active)
-				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.55f, 0.10f, 1.0f));
-
-			ImGui::BeginDisabled(!enabled);
-			if (ImGui::Button(label))
-				m_GizmoOperation = operation;
-			ImGui::EndDisabled();
-
-			if (active)
-				ImGui::PopStyleColor();
-		};
-
-		operationButton("Move (G)", ImGuizmo::TRANSLATE, true);
-		ImGui::SameLine();
-		operationButton("Rotate (R)", ImGuizmo::ROTATE, m_Selection.SupportsRotation());
-		ImGui::SameLine();
-		operationButton("Scale (S)", ImGuizmo::SCALE, true);
-	}
-
 	void Application::DrawSelectionProperties() {
 		if (!m_Selection.IsValid()) {
 			ImGui::TextDisabled("No object selected.");
@@ -812,11 +595,7 @@ namespace Lucerna {
 			return;
 		}
 
-		ImGui::TextColored(ImVec4(1.0f, 0.67f, 0.16f, 1.0f), "%s", GetSelectionLabel().c_str());
-		DrawGizmoToolbar();
-		ImGui::Spacing();
-
-		ImGui::PushItemWidth(200.0f);
+		ImGui::PushItemWidth(-FLT_MIN);
 
 		// il nome si rinomina qui; e' unico nella lista del suo tipo (issue #23)
 		{
@@ -826,8 +605,8 @@ namespace Lucerna {
 		switch (m_Selection.Type) {
 		case SelectionType::Sphere: {
 			Sphere sphere = m_Scene.Spheres().at(SelectedIndex());
-			bool changed = ImGui::DragFloat3("Center", glm::value_ptr(sphere.Position), 0.1f);
-			changed |= ImGui::DragFloat("Radius", &sphere.Position.w, 0.05f, 0.001f, 1000.0f);
+			bool changed = UI::DragFloat3("Center", glm::value_ptr(sphere.Position), 0.1f);
+			changed |= UI::DragFloat("Radius", &sphere.Position.w, 0.05f, 0.001f, 1000.0f);
 			changed |= MaterialCombo("Material", sphere.Material);
 			if (changed)
 				m_Scene.Set(m_Selection.Id, sphere);
@@ -835,11 +614,11 @@ namespace Lucerna {
 		}
 		case SelectionType::Quad: {
 			Quad quad = m_Scene.Quads().at(SelectedIndex());
-			bool changed = ImGui::DragFloat3("Corner", glm::value_ptr(quad.PositionLLC), 0.1f);
-			changed |= ImGui::DragFloat3("U axis", glm::value_ptr(quad.U), 0.05f);
-			changed |= ImGui::DragFloat3("V axis", glm::value_ptr(quad.V), 0.05f);
-			changed |= ImGui::DragFloat("Width", &quad.Width, 0.1f, 0.001f, 1000.0f);
-			changed |= ImGui::DragFloat("Height", &quad.Height, 0.1f, 0.001f, 1000.0f);
+			bool changed = UI::DragFloat3("Corner", glm::value_ptr(quad.PositionLLC), 0.1f);
+			changed |= UI::DragFloat3("U axis", glm::value_ptr(quad.U), 0.05f);
+			changed |= UI::DragFloat3("V axis", glm::value_ptr(quad.V), 0.05f);
+			changed |= UI::DragFloat("Width", &quad.Width, 0.1f, 0.001f, 1000.0f);
+			changed |= UI::DragFloat("Height", &quad.Height, 0.1f, 0.001f, 1000.0f);
 			changed |= MaterialCombo("Material", quad.Material);
 			if (changed)
 				m_Scene.Set(m_Selection.Id, quad);
@@ -850,8 +629,8 @@ namespace Lucerna {
 			Box box = m_Scene.Boxes().at(SelectedIndex());
 
 			bool changed = false;
-			changed |= ImGui::DragFloat3("Min", glm::value_ptr(box.Min), 0.1f);
-			changed |= ImGui::DragFloat3("Max", glm::value_ptr(box.Max), 0.1f);
+			changed |= UI::DragFloat3("Min", glm::value_ptr(box.Min), 0.1f);
+			changed |= UI::DragFloat3("Max", glm::value_ptr(box.Max), 0.1f);
 			changed |= MaterialCombo("Material", box.Material);
 
 			if (changed)
@@ -867,7 +646,7 @@ namespace Lucerna {
 			ImGui::TextDisabled("mesh asset: %s", asset ? m_Assets.FindMesh(mesh.Asset)->Name.c_str() : "missing");
 
 			glm::vec3 position = glm::vec3(mesh.Transform[3]); // la traslazione e' l'ultima colonna
-			bool changed = ImGui::DragFloat3("Position", glm::value_ptr(position), 0.1f);
+			bool changed = UI::DragFloat3("Position", glm::value_ptr(position), 0.1f);
 			if (changed)
 				mesh.Transform[3] = glm::vec4(position, 1.0f);
 			changed |= MaterialCombo("Material", mesh.Material);
@@ -883,23 +662,23 @@ namespace Lucerna {
 			PunctualLight light = m_Scene.PunctualLights().at(SelectedIndex());
 			bool changed = false;
 			int type = light.Spot ? 1 : 0;
-			if (ImGui::Combo("Type", &type, "Point\0Spot\0\0")) {
+			if (UI::Combo("Type", &type, "Point\0Spot\0\0")) {
 				light.Spot = type == 1;
 				changed = true;
 			}
-			changed |= ImGui::DragFloat3("Position", glm::value_ptr(light.Position), 0.05f);
-			changed |= ImGui::ColorEdit3("Color", glm::value_ptr(light.Color));
-			changed |= ImGui::DragFloat("Intensity", &light.Intensity, 0.1f, 0.0f, 1e6f, "%.2f W/sr", ImGuiSliderFlags_Logarithmic);
+			changed |= UI::DragFloat3("Position", glm::value_ptr(light.Position), 0.05f);
+			changed |= UI::ColorEdit3("Color", glm::value_ptr(light.Color));
+			changed |= UI::DragFloat("Intensity", &light.Intensity, 0.1f, 0.0f, 1e6f, "%.2f W/sr", ImGuiSliderFlags_Logarithmic);
 			ImGui::TextDisabled("power %.1f W, as a Blender lamp", light.Intensity * 4.0f * 3.14159265f);
 			if (light.Spot) {
-				if (ImGui::DragFloat3("Direction", glm::value_ptr(light.Direction), 0.01f)) {
+				if (UI::DragFloat3("Direction", glm::value_ptr(light.Direction), 0.01f)) {
 					if (glm::length(light.Direction) < 1e-4f)
 						light.Direction = { 0.0f, -1.0f, 0.0f };
 					light.Direction = glm::normalize(light.Direction);
 					changed = true;
 				}
-				changed |= ImGui::SliderFloat("Outer angle", &light.OuterAngle, 0.5f, 90.0f, "%.1f deg");
-				changed |= ImGui::SliderFloat("Inner angle", &light.InnerAngle, 0.0f, light.OuterAngle, "%.1f deg");
+				changed |= UI::SliderFloat("Outer angle", &light.OuterAngle, 0.5f, 90.0f, "%.1f deg");
+				changed |= UI::SliderFloat("Inner angle", &light.InnerAngle, 0.0f, light.OuterAngle, "%.1f deg");
 				light.InnerAngle = glm::min(light.InnerAngle, light.OuterAngle);
 			}
 			if (changed)
@@ -933,7 +712,9 @@ namespace Lucerna {
 		const std::string preview = current >= 0 ? m_Assets.Materials()[current].Name : "(none)";
 		bool changed = false;
 
-		if (ImGui::BeginCombo(label, preview.c_str())) {
+		UI::Label(label);
+		ImGui::SetNextItemWidth(-(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
+		if (ImGui::BeginCombo((std::string("##") + label).c_str(), preview.c_str())) {
 			for (int i = 0; i < count; i++) {
 				ImGui::PushID(i);
 
@@ -957,8 +738,13 @@ namespace Lucerna {
 		// ritrovare l'indice giusto e riaprire l'albero.
 		ImGui::SameLine();
 		ImGui::PushID(label);
-		if (ImGui::SmallButton("Edit") && current >= 0)
-			OpenMaterialEditor(current);
+		// apre questo materiale nella sezione Material delle proprieta'
+		if (ImGui::Button(ICON_MATERIAL, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight())) && current >= 0) {
+			m_EditedMaterial = m_Assets.Materials()[current].Id;
+			m_PropertiesTab = PropertiesTab::Material;
+		}
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Edit this material");
 		ImGui::PopID();
 
 		return changed;
@@ -968,7 +754,8 @@ namespace Lucerna {
 	bool Application::TextureCombo(const char* label, ObjectId& texture, TextureKind kind) {
 		const int current = m_Assets.Textures().IndexOf(texture);
 		bool changed = false;
-		if (ImGui::BeginCombo(label, current >= 0 ? m_Assets.Textures()[current].Name.c_str() : "None")) {
+		UI::Label(label);
+		if (ImGui::BeginCombo((std::string("##") + label).c_str(), current >= 0 ? m_Assets.Textures()[current].Name.c_str() : "None")) {
 			if (ImGui::Selectable("None", current < 0)) {
 				texture = {};
 				changed = true;
@@ -1005,10 +792,13 @@ namespace Lucerna {
 		return m_NewObjectMaterial;
 	}
 
-	void Application::DrawAddObjectMenu() {
+	// Il menu Add: gli oggetti nascono davanti alla camera, col materiale aperto nelle proprieta'
+	void Application::DrawAddMenu() {
+		if (!ImGui::BeginMenu("Add"))
+			return;
 		const glm::vec3 spawn = SpawnPosition();
 
-		if (ImGui::Button("+ Sphere")) {
+		if (ImGui::MenuItem(ICON_SPHERE " Sphere")) {
 			const ObjectId material = EnsureMaterialExists();
 
 			Sphere sphere;
@@ -1018,8 +808,7 @@ namespace Lucerna {
 			m_GizmoOperation = ImGuizmo::TRANSLATE;
 		}
 
-		ImGui::SameLine();
-		if (ImGui::Button("+ Box")) {
+		if (ImGui::MenuItem(ICON_BOX " Box")) {
 			const ObjectId material = EnsureMaterialExists();
 
 			// CreateBox appende i suoi 6 quad in coda, quindi i Box::index gia' esistenti
@@ -1031,8 +820,7 @@ namespace Lucerna {
 			m_GizmoOperation = ImGuizmo::TRANSLATE;
 		}
 
-		ImGui::SameLine();
-		if (ImGui::Button("+ Quad")) {
+		if (ImGui::MenuItem(ICON_QUAD " Quad")) {
 			const ObjectId material = EnsureMaterialExists();
 
 			Quad quad;
@@ -1048,20 +836,18 @@ namespace Lucerna {
 
 		// luci punto e spot (ADR 0009): lo spot nasce rivolto in basso
 		for (int spot = 0; spot < 2; spot++) {
-			if (ImGui::Button(spot ? "+ Spot light" : "+ Point light")) {
+			if (ImGui::MenuItem(spot ? ICON_SPOT_LIGHT " Spot light" : ICON_POINT_LIGHT " Point light")) {
 				PunctualLight light;
 				light.Spot = spot == 1;
 				light.Position = spawn;
 				m_Selection = Select(SelectionType::Light, m_Scene.AddLight(light, spot ? "Spot light" : "Point light"));
 				m_GizmoOperation = ImGuizmo::TRANSLATE;
 			}
-			if (spot == 0)
-				ImGui::SameLine();
 		}
 
 		// Add (issue #27): le mesh e le luci di un file, davanti alla camera. Lo stesso file
 		// aggiunto due volte si carica una volta sola: le istanze dividono la geometria.
-		if (ImGui::Button("+ Model...")) {
+		if (ImGui::MenuItem(ICON_MESH " Model...")) {
 			const auto selection = pfd::open_file("Add model", "models", FileFilters()).result();
 			if (!selection.empty()) {
 				const ObjectId material = EnsureMaterialExists();
@@ -1073,12 +859,10 @@ namespace Lucerna {
 			}
 		}
 
-		ImGui::PushItemWidth(160.0f);
-		MaterialCombo("Material for new objects", m_NewObjectMaterial);
-		ImGui::PopItemWidth();
+		ImGui::EndMenu();
 	}
 
-	// ------------------------------------------------------------ UI: tab Materials
+	// ------------------------------------------------------------ selezione e cancellazione
 
 	// Quanti elementi ha la collezione a cui punta una selezione di questo tipo.
 	int Application::SelectionCollectionSize(SelectionType type) const {
@@ -1196,17 +980,17 @@ namespace Lucerna {
 
 		// Base color. La tinta del vetro segue la base color (assorbimento Beer-Lambert).
 		glm::vec3 baseColor = glm::vec3(material.Color);
-		if (ImGui::ColorEdit3("Base Color", glm::value_ptr(baseColor))) {
+		if (UI::ColorEdit3("Base Color", glm::value_ptr(baseColor))) {
 			material.Color = glm::vec4(baseColor, 1.0f);
 			changed = true;
 		}
 
 		ImGui::SeparatorText("Surface");
 
-		if (ImGui::SliderFloat("Metallic", &material.Metalness, 0.0f, 1.0f)) changed = true;
+		if (UI::SliderFloat("Metallic", &material.Metalness, 0.0f, 1.0f)) changed = true;
 
 		// Un'unica roughness per riflesso e trasmissione, come il Principled.
-		if (ImGui::SliderFloat("Roughness", &material.Roughness, 0.0f, 1.0f)) {
+		if (UI::SliderFloat("Roughness", &material.Roughness, 0.0f, 1.0f)) {
 			material.RefractionRoughness = material.Roughness;
 			changed = true;
 		}
@@ -1214,17 +998,17 @@ namespace Lucerna {
 		// Specular tint: colora il riflesso di un dielettrico verso la base color. Un metallo
 		// lo ignora (il riflesso e' gia' tinto dall'albedo), quindi si grigia a metallo pieno.
 		ImGui::BeginDisabled(material.Metalness >= 0.999f);
-		if (ImGui::SliderFloat("Specular tint", &material.SpecularTint, 0.0f, 1.0f)) changed = true;
+		if (UI::SliderFloat("Specular tint", &material.SpecularTint, 0.0f, 1.0f)) changed = true;
 		ImGui::EndDisabled();
 
 		// IOR: il Fresnel lo usa anche per il riflesso dielettrico, non solo per il vetro.
 		// Su un metallo non ha effetto (rifrazione spenta, Fresnel saturo).
 		ImGui::BeginDisabled(isMetal);
-		if (ImGui::SliderFloat("IOR", &material.RefractionRatio, 1.0f, 2.5f)) changed = true;
+		if (UI::SliderFloat("IOR", &material.RefractionRatio, 1.0f, 2.5f)) changed = true;
 
 		// Transmission = quanto e' vetroso. Un metallo non trasmette.
 		float transmission = material.RefractionProbability;
-		if (ImGui::SliderFloat("Transmission", &transmission, 0.0f, 1.0f)) {
+		if (UI::SliderFloat("Transmission", &transmission, 0.0f, 1.0f)) {
 			material.RefractionProbability = transmission;
 			changed = true;
 		}
@@ -1237,7 +1021,7 @@ namespace Lucerna {
 		if (ImGui::TreeNode("Advanced")) {
 			ImGui::BeginDisabled(isMetal);
 			float specLevel = std::clamp(material.SpecularProbability / 0.08f, 0.0f, 1.0f);
-			if (ImGui::SliderFloat("Specular", &specLevel, 0.0f, 1.0f)) {
+			if (UI::SliderFloat("Specular", &specLevel, 0.0f, 1.0f)) {
 				material.SpecularProbability = 0.08f * specLevel;
 				changed = true;
 			}
@@ -1256,17 +1040,17 @@ namespace Lucerna {
 		}
 
 		ImGui::SeparatorText("Emission");
-		if (ImGui::DragFloat("Emissive Strength", &material.EmissiveStrenght, 0.1f, 0.0f, FLT_MAX)) edited = true;
-		if (ImGui::ColorEdit3("Emissive Color", glm::value_ptr(material.EmissiveColor))) edited = true;
+		if (UI::DragFloat("Emissive Strength", &material.EmissiveStrenght, 0.1f, 0.0f, FLT_MAX)) edited = true;
+		if (UI::ColorEdit3("Emissive Color", glm::value_ptr(material.EmissiveColor))) edited = true;
 
 		ImGui::SeparatorText("Base Color texture");
 		int checkerMode = static_cast<int>(material.Checker + 0.5f);
-		if (ImGui::Combo("Checker", &checkerMode, "Off\0UV (debug)\0World space\0\0")) {
+		if (UI::Combo("Checker", &checkerMode, "Off\0UV (debug)\0World space\0\0")) {
 			material.Checker = static_cast<float>(checkerMode);
 			edited = true;
 		}
 		if (checkerMode != 0) {
-			if (ImGui::DragFloat("Checker scale", &material.CheckerScale, 0.1f, 0.01f, 64.0f))
+			if (UI::DragFloat("Checker scale", &material.CheckerScale, 0.1f, 0.01f, 64.0f))
 				edited = true;
 		}
 
@@ -1287,10 +1071,10 @@ namespace Lucerna {
 			if (TextureCombo("Normal map", material.NormalTexture, TextureKind::Data))
 				edited = true;
 			if (!material.NormalTexture.IsNil()) {
-				if (ImGui::SliderFloat("Normal strength", &material.NormalStrength, 0.0f, 2.0f))
+				if (UI::SliderFloat("Normal strength", &material.NormalStrength, 0.0f, 2.0f))
 					edited = true;
 				bool flipY = material.NormalFlipY > 0.5f;
-				if (ImGui::Checkbox("Flip green (DirectX)", &flipY)) {
+				if (UI::Checkbox("Flip green (DirectX)", &flipY)) {
 					material.NormalFlipY = flipY ? 1.0f : 0.0f;
 					edited = true;
 				}
@@ -1302,37 +1086,37 @@ namespace Lucerna {
 		// triangoli stanno in una geometria a parte del BLAS. Qui si cambia solo la soglia.
 		if (material.AlphaCutoff > 0.0f) {
 			ImGui::SeparatorText("Alpha mask");
-			if (ImGui::SliderFloat("Alpha cutoff", &material.AlphaCutoff, 0.01f, 1.0f))
+			if (UI::SliderFloat("Alpha cutoff", &material.AlphaCutoff, 0.01f, 1.0f))
 				edited = true;
 		}
 
 		ImGui::SeparatorText("Procedural noise");
 		int noiseMode = static_cast<int>(material.NoiseType + 0.5f);
-		if (ImGui::Combo("Noise", &noiseMode, "Off\0Perlin\0Turbulence\0Marble\0\0")) {
+		if (UI::Combo("Noise", &noiseMode, "Off\0Perlin\0Turbulence\0Marble\0\0")) {
 			material.NoiseType = static_cast<float>(noiseMode);
 			edited = true;
 		}
 		if (noiseMode != 0) {
-			if (ImGui::DragFloat("Noise scale", &material.NoiseScale, 0.05f, 0.01f, 64.0f)) edited = true;
-			if (ImGui::SliderFloat("Noise blend", &material.NoiseBlend, 0.0f, 1.0f)) edited = true;
+			if (UI::DragFloat("Noise scale", &material.NoiseScale, 0.05f, 0.01f, 64.0f)) edited = true;
+			if (UI::SliderFloat("Noise blend", &material.NoiseBlend, 0.0f, 1.0f)) edited = true;
 
 			// Turbulence e Marble sommano ottave: il costo per raggio e' lineare in questo
 			// valore, e viene pagato a ogni rimbalzo su questo materiale.
 			if (noiseMode >= 2) {
 				int octaves = static_cast<int>(material.NoiseOctaves + 0.5f);
-				if (ImGui::SliderInt("Octaves", &octaves, 1, 8)) {
+				if (UI::SliderInt("Octaves", &octaves, 1, 8)) {
 					material.NoiseOctaves = static_cast<float>(octaves);
 					edited = true;
 				}
 			}
 			// La fase e' quello che trasforma il rumore in venature: senza, il marmo e' nebbia.
 			if (noiseMode == 3) {
-				if (ImGui::DragFloat("Turbulence phase", &material.NoiseTurbulence, 0.1f, 0.0f, 40.0f))
+				if (UI::DragFloat("Turbulence phase", &material.NoiseTurbulence, 0.1f, 0.0f, 40.0f))
 					edited = true;
 			}
 
-			if (ImGui::ColorEdit3("Noise color A", glm::value_ptr(material.NoiseColorA))) edited = true;
-			if (ImGui::ColorEdit3("Noise color B", glm::value_ptr(material.NoiseColorB))) edited = true;
+			if (UI::ColorEdit3("Noise color A", glm::value_ptr(material.NoiseColorA))) edited = true;
+			if (UI::ColorEdit3("Noise color B", glm::value_ptr(material.NoiseColorB))) edited = true;
 
 			ImGui::TextDisabled("Evaluated in world space: the object \"slides\" through the noise if you move it");
 		}
@@ -1340,39 +1124,6 @@ namespace Lucerna {
 		ImGui::Spacing();
 		ImGui::TextDisabled("Material %d", index);
 		return edited;
-	}
-
-	void Application::OpenMaterialEditor(int index) {
-		m_MaterialEditorIndex = index;
-		m_ShowMaterialEditor = true;
-	}
-
-	// Finestra flottante sul materiale dell'oggetto selezionato.
-	void Application::DrawMaterialEditorWindow() {
-		if (!m_ShowMaterialEditor)
-			return;
-
-		// L'indice puo' essere diventato invalido (cambio scena): e' esattamente la classe
-		// di bug che ha fatto crashare la selezione, quindi stesso trattamento.
-		if (m_MaterialEditorIndex < 0 || m_MaterialEditorIndex >= (int)m_Assets.Materials().size()) {
-			m_ShowMaterialEditor = false;
-			return;
-		}
-
-		ImGui::SetNextWindowSize(ImVec2(340.0f, 0.0f), ImGuiCond_FirstUseEver);
-
-		// il "###" fissa l'ID della finestra mentre il titolo cambia con l'indice
-		const std::string title = "Material " + std::to_string(m_MaterialEditorIndex) + "###MaterialEditor";
-
-		if (ImGui::Begin(title.c_str(), &m_ShowMaterialEditor)) {
-			ImGui::PushItemWidth(170.0f);
-			Material material = m_Assets.Materials()[m_MaterialEditorIndex];
-			if (DrawMaterialEditor(material, m_MaterialEditorIndex))
-				m_Assets.Set(m_Assets.Materials()[m_MaterialEditorIndex].Id, material);
-			ImGui::PopItemWidth();
-		}
-
-		ImGui::End();
 	}
 
 	// Le texture sono asset (issue #26): i materiali le citano per id, e il layer lo sceglie il
@@ -1445,47 +1196,7 @@ namespace Lucerna {
 		ImGui::TextDisabled("color = albedo (sRGB), data = normal map or alpha mask");
 	}
 
-	void Application::DrawMaterialsTab() {
-		ImGui::Spacing();
-
-		DrawTextureManager();
-		ImGui::Spacing();
-
-		if (ImGui::Button("+ Add material")) {
-			OpenMaterialEditor(m_Assets.Materials().IndexOf(m_Assets.AddMaterial(CreateDefaultPrincipled())));
-		}
-
-		if (m_Assets.Materials().empty()) {
-			ImGui::TextDisabled("no materials in this scene");
-			return;
-		}
-
-		ImGui::Spacing();
-		ImGui::PushItemWidth(200.0f);
-
-		for (size_t i = 0; i < m_Assets.Materials().size(); i++) {
-			Material material = m_Assets.Materials().at(i);
-
-			ImGui::PushID((int)i);
-
-			// pastiglia del colore accanto al nome: si riconosce il materiale a colpo d'occhio
-			ImGui::ColorButton("##swatch", ImVec4(material.Color.r, material.Color.g, material.Color.b, 1.0f),
-				ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2(14.0f, 14.0f));
-			ImGui::SameLine();
-
-			if (ImGui::TreeNode(m_Assets.Materials()[i].Name.c_str())) {
-				if (DrawMaterialEditor(material, (int)i))
-					m_Assets.Set(m_Assets.Materials()[i].Id, material);
-				ImGui::TreePop();
-			}
-
-			ImGui::PopID();
-		}
-
-		ImGui::PopItemWidth();
-	}
-
-	// --------------------------------------------------------------- UI: tab Render
+	// --------------------------------------------------------------- camere
 
 	// Le due camere (ADR 0011). La vista agganciata scrive nell'inquadratura quando si naviga;
 	// in entrambe le modalita', se l'inquadratura cambia da fuori (un load, "Align", PT_CAM) la
@@ -1516,193 +1227,6 @@ namespace Lucerna {
 			m_DisplayVersion = m_Renderer.GetDisplayVersion();
 		}
 		return reinterpret_cast<ImTextureID>(m_DisplaySet);
-	}
-
-	void Application::DrawRenderTab() {
-		ImGui::Spacing();
-		ImGui::PushItemWidth(200.0f);
-
-		// Preset (ADR 0010): punti di partenza. Le impostazioni si salvano con la scena.
-		ImGui::SeparatorText("Preset");
-		const std::pair<const char*, RenderSettings (*)()> presets[] = {
-			{ "Draft", &RenderSettings::Draft }, { "Preview", &RenderSettings::Preview }, { "Final", &RenderSettings::Final } };
-		for (size_t i = 0; i < std::size(presets); i++) {
-			if (i > 0) ImGui::SameLine();
-			if (ImGui::Button(presets[i].first))
-				m_Renderer.Settings = presets[i].second();
-		}
-
-		ImGui::SeparatorText("Path tracing");
-		ImGui::Checkbox("Enable Path Tracing", &m_Renderer.View.PathTracing);
-		// le impostazioni dell'integratore fanno ripartire l'accumulo da sole (il Renderer le confronta)
-		ImGui::SliderInt("Samples per pixel", &m_Renderer.Settings.SamplesPerPixel, 1, 16);
-		ImGui::SliderInt("Ray depth", &m_Renderer.Settings.RayDepth, 1, 50);
-		if (ImGui::Button("Reset Accumulation")) m_Renderer.RestartAccumulation();
-
-		// Render scale: risoluzione ridotta SOLO mentre la camera si muove (piu' fluido),
-		// piena risoluzione + accumulo da fermi. Nessun reset qui: agisce al prossimo movimento.
-		{
-			const char* labels[] = { "1.0 (full)", "0.75", "0.5", "0.25" };
-			const float values[] = { 1.0f, 0.75f, 0.5f, 0.25f };
-			int idx = 0;
-			for (int i = 0; i < 4; i++) if (m_Renderer.Settings.RenderScale == values[i]) idx = i;
-			if (ImGui::Combo("Render scale (while moving)", &idx, labels, 4))
-				m_Renderer.Settings.RenderScale = values[idx];
-		}
-
-		ImGui::SeparatorText("Output");
-		if (ImGui::Checkbox("Vsync", &m_Vsync)) {
-			m_Vulkan.SetVsync(m_Vsync);
-			m_Preferences.Vsync = m_Vsync;
-			m_Preferences.Save();
-		}
-
-		// Esposizione e tonemap agiscono DOPO l'accumulo (fragment di post): cambiarli non
-		// invalida i campioni gia' accumulati, e il Renderer non li conta fra le impostazioni che ripartono.
-		ImGui::Checkbox("ACES tonemap", &m_Renderer.Settings.Tonemap);
-		ImGui::DragFloat("Exposure", &m_Renderer.Settings.Exposure, 0.01f, 0.0f, 10.0f);
-
-		// Il firefly clamp invece vive nel path tracer e cambia i campioni: va resettato.
-		// Etichetta come luminanza massima; 0 = off. Sotto ~2 inizia a mangiare i riflessi.
-		if (ImGui::DragFloat("Firefly clamp", &m_Renderer.Settings.FireflyClamp, 0.1f, 0.0f, 50.0f, "%.1f"))
-			m_Renderer.Settings.FireflyClamp = std::max(m_Renderer.Settings.FireflyClamp, 0.0f);
-		if (m_Renderer.Settings.FireflyClamp <= 0.0f)
-			ImGui::TextDisabled("firefly clamp off");
-
-		// La camera della scena e' l'inquadratura; la vista la segue o naviga libera (ADR 0011)
-		ImGui::SeparatorText("Camera");
-		// riagganciare la vista la riporta sull'inquadratura: il renderer lo vede e riparte
-		if (ImGui::Checkbox("Lock view to camera", &m_Renderer.View.LockViewToCamera) && m_Renderer.View.LockViewToCamera)
-			m_Camera.SetView(m_Scene.Camera().Position, m_Scene.Camera().Direction); // torna all'inquadratura
-		ImGui::BeginDisabled(m_Renderer.View.LockViewToCamera);
-		if (ImGui::Button("Align camera to view")) { // cambia l'inquadratura salvata: e' una modifica
-			SceneCamera camera = m_Scene.Camera();
-			camera.Position = m_Camera.GetPosition();
-			camera.Direction = m_Camera.GetDirection();
-			m_Scene.SetCamera(camera);
-		}
-		ImGui::EndDisabled();
-		ImGui::TextDisabled(m_Renderer.View.LockViewToCamera ? "navigating moves the scene camera"
-		                                                      : "free view: the scene camera stays put");
-
-		// L'obiettivo cambia i raggi primari, quindi si riconsegna con SetCamera: l'accumulo
-		// riparte (esposizione e tonemap invece agiscono dopo l'accumulo).
-		SceneCamera camera = m_Scene.Camera();
-		bool cameraChanged = ImGui::SliderFloat("Vertical FOV", &camera.VerticalFOV, 30.0f, 140.0f);
-		if (ImGui::Button("Reset camera")) {
-			const SceneCamera defaults;
-			camera.Position = defaults.Position;
-			camera.Direction = defaults.Direction;
-			cameraChanged = true;
-		}
-		ImGui::TextDisabled("right mouse + WASD to navigate");
-
-		ImGui::SeparatorText("Depth of field");
-		if (ImGui::SliderFloat("Aperture", &camera.Aperture, 0.0f, 0.5f, "%.3f")) {
-			camera.Aperture = std::max(camera.Aperture, 0.0f);
-			cameraChanged = true;
-		}
-
-		const bool dofOff = camera.Aperture <= 0.0f;
-		ImGui::BeginDisabled(dofOff);
-		if (ImGui::DragFloat("Focus distance", &camera.FocusDistance, 0.05f, 0.01f, 1000.0f, "%.2f")) {
-			camera.FocusDistance = std::max(camera.FocusDistance, 0.01f);
-			cameraChanged = true;
-		}
-		if (cameraChanged)
-			m_Scene.SetCamera(camera);
-
-		// pick del punto di fuoco: arma la modalita', il prossimo click nel viewport
-		// mette a fuoco esattamente li'
-		if (m_FocusPickArmed) {
-			if (ImGui::Button("Cancel pick")) m_FocusPickArmed = false;
-			ImGui::SameLine();
-			ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "click a point in the scene...");
-		}
-		else if (ImGui::Button("Pick focus (click an object)")) {
-			m_FocusPickArmed = true;
-		}
-		ImGui::EndDisabled();
-
-		if (dofOff)
-			ImGui::TextDisabled("aperture 0: DOF off (pinhole)");
-
-		ImGui::PopItemWidth();
-
-		ImGui::SeparatorText("Vulkan");
-		ImGui::TextDisabled("Device: %s", m_Vulkan.DeviceName());
-	}
-
-	// ---------------------------------------------------------------- UI: tab Debug
-
-	void Application::DrawDebugTab() {
-		ImGui::Spacing();
-
-		ImGui::SeparatorText("AOV / Denoiser");
-		// Vista dei feature buffer del primo hit (fondamenta del denoiser). Beauty = immagine
-		// normale; gli altri mostrano l'AOV crudo (senza esposizione/ACES).
-		// reset dell'accumulo al cambio vista: le viste AOV scrivono in imgOutput (condiviso
-		// con l'accumulatore del colore), quindi tornando a Beauty il colore va ripartito da capo.
-		ImGui::Combo("View", &m_Renderer.View.AOVView, "Beauty\0Albedo\0Normal\0Depth\0History\0\0");
-		if (m_Renderer.View.AOVView == 4)
-			ImGui::TextDisabled("green = mature history, red = restarted (disocclusion)");
-		else if (m_Renderer.View.AOVView != 0)
-			ImGui::TextDisabled("AOV debug view: no tonemap");
-
-		// Riproiezione temporale (ADR 0002)
-		ImGui::Spacing();
-		ImGui::Checkbox("Temporal reprojection", &m_Renderer.Settings.Reproject);
-		if (m_Renderer.Settings.Reproject) {
-			ImGui::SliderInt("History cap", &m_Renderer.Settings.HistoryCap, 1, 128);
-			ImGui::TextDisabled("cap solo in movimento; da fermo N cresce libero");
-		} else {
-			ImGui::TextDisabled("off: moving the camera resets accumulation");
-		}
-
-		// Denoiser à-trous: e' un view filter read-only, non tocca l'accumulo -> niente reset.
-		// Next Event Estimation: cambia l'integratore -> reset dell'accumulo per non
-		// mischiare campioni con e senza NEE.
-		ImGui::Spacing();
-		ImGui::Checkbox("Next Event Estimation", &m_Renderer.Settings.NEE);
-		ImGui::TextDisabled(m_Renderer.Settings.NEE
-			? "samples lights directly (needs an emitter: emissive geometry or the sun)"
-			: "off: lights are found only by random bounces (more noise)");
-
-		ImGui::Spacing();
-		ImGui::Checkbox("Denoise (a-trous)", &m_Renderer.Settings.Denoise);
-		if (m_Renderer.Settings.Denoise) {
-			if (m_Renderer.View.AOVView != 0) {
-				ImGui::TextDisabled("active in Beauty view only");
-			} else {
-				ImGui::SliderFloat("Strength", &m_Renderer.Settings.DenoiseStrength, 0.0f, 1.0f, "%.2f");
-				ImGui::Checkbox("Fade with accumulation", &m_Renderer.Settings.DenoiseAutoFade);
-				if (m_Renderer.Settings.DenoiseAutoFade)
-					ImGui::TextDisabled("fades out as the image converges (~1/sqrt N)");
-				ImGui::SliderFloat("Sigma luminance", &m_Renderer.Settings.DenoiseCPhi, 0.05f, 10.0f, "%.2f");
-				ImGui::SliderFloat("Sigma normal", &m_Renderer.Settings.DenoiseNPhi, 1.0f, 128.0f, "%.0f");
-				ImGui::SliderFloat("Sigma depth", &m_Renderer.Settings.DenoisePPhi, 0.05f, 10.0f, "%.2f");
-				ImGui::SliderFloat("Sigma albedo", &m_Renderer.Settings.DenoiseAPhi, 0.02f, 1.0f, "%.2f");
-				ImGui::TextDisabled("view filter: does not touch accumulation");
-			}
-		}
-
-		ImGui::SeparatorText("Picking");
-		ImGui::Text("hovered window : %s", HoveredWindowName());
-		ImGui::Text("viewport hover : %s", m_ViewportHovered ? "YES" : "NO");
-		ImGui::Text("viewport rect  : (%.0f,%.0f) %.0f x %.0f",
-			m_ViewportPos.x, m_ViewportPos.y, m_ViewportSize.x, m_ViewportSize.y);
-		ImGui::Text("pick requests  : %d", m_PickRequestCount);
-		ImGui::Text("last pixel     : (%d, %d)", m_LastPickPixel.x, m_LastPickPixel.y);
-		ImGui::Text("last result    : type=%d index=%d", m_LastPickType, m_LastPickIndex);
-		ImGui::TextDisabled("-2 = not written by the shader, -1 = ray missed");
-
-		// Bypassa il gate del mouse: se questo seleziona ma il click no, il problema
-		// e' nel gate; se non seleziona nemmeno questo, e' nella pipeline di picking.
-		if (ImGui::Button("Pick at viewport center")) {
-			m_LastPickPixel = { (int)m_ViewportSize.x / 2, (int)m_ViewportSize.y / 2 };
-			m_PickRequestCount++;
-			m_Renderer.RequestPick(m_LastPickPixel.x, m_LastPickPixel.y);
-		}
 	}
 
 	// Dove ancorare il gizmo: il centro VISIVO dell'oggetto, non l'origine della sua
@@ -1843,12 +1367,9 @@ namespace Lucerna {
 	void Application::DrawSelectionOverlay() {
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-		const ImU32 accent = m_Selection.IsValid() ? IM_COL32(255, 170, 40, 255) : IM_COL32(180, 180, 180, 200);
-		std::string label = GetSelectionLabel();
-		DrawTextWithShadow(drawList, ImVec2(m_ViewportPos.x + 14.0f, m_ViewportPos.y + 14.0f), accent, label.c_str());
-
 		if (!m_Selection.IsValid())
 			return;
+		const ImU32 accent = ImGui::GetColorU32(Theme::Accent);
 
 		glm::vec3 boundsMin, boundsMax;
 		GetSelectionBounds(boundsMin, boundsMax);
@@ -2012,7 +1533,7 @@ namespace Lucerna {
 		std::array<char, 128>& buffer = m_NameBuffers[id];
 		if (buffer[0] == '\0' && !name.empty())
 			snprintf(buffer.data(), buffer.size(), "%s", name.c_str());
-		ImGui::InputText("Name", buffer.data(), buffer.size());
+		UI::InputText("Name", buffer.data(), buffer.size());
 		if (ImGui::IsItemDeactivatedAfterEdit())
 			m_Scene.Rename(id, buffer.data()) || m_Assets.Rename(id, buffer.data()); // unico nella lista: puo' diventare "nome.001"
 		if (!ImGui::IsItemActive())
@@ -2053,7 +1574,7 @@ namespace Lucerna {
 		// ogni scorciatoia.
 		// con la modale di conferma aperta, Escape deve chiuderla e non deselezionare,
 		// e Canc non deve riaprirla: le scorciatoie restano sospese
-		if (!io.WantTextInput && !m_ShowDeletePopup && !Input::IsMouseButtonDown(MouseButton::Right)) {
+		if (!io.WantTextInput && !io.KeyCtrl && !m_ShowDeletePopup && !Input::IsMouseButtonDown(MouseButton::Right)) {
 			if (ImGui::IsKeyPressed(ImGuiKey_G)) m_GizmoOperation = ImGuizmo::TRANSLATE;
 			if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoOperation = ImGuizmo::ROTATE;
 			if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoOperation = ImGuizmo::SCALE;
@@ -2156,5 +1677,18 @@ namespace Lucerna {
 		m_Camera.OnResize(m_ViewportWidth, m_ViewportHeight);
 		m_Renderer.OnResize(m_ViewportWidth, m_ViewportHeight);
 		m_Renderer.Render(m_Camera.GetRenderView(), m_Scene, m_Assets);
+	}
+
+	ObjectId Application::SelectedMaterial() const {
+		if (!m_Selection.IsValid())
+			return {};
+		const int i = SelectedIndex();
+		switch (m_Selection.Type) {
+		case SelectionType::Sphere: return m_Scene.Spheres()[i].Material;
+		case SelectionType::Quad:   return m_Scene.Quads()[i].Material;
+		case SelectionType::Box:    return m_Scene.Boxes()[i].Material;
+		case SelectionType::Mesh:   return m_Scene.Meshes()[i].Material;
+		default:                    return {};
+		}
 	}
 }

@@ -73,30 +73,43 @@ namespace Lucerna {
 		void Render(float deltaTime);
 		void HandleCaptures();
 
-		// pannelli della UI, uno per tab
-		void DrawSceneTab();
-		void DrawMaterialsTab();
-		void DrawRenderTab();
-		void DrawDebugTab();
+		// ---- l'area di lavoro (Workspace.cpp): layout, menu, pannelli, sezioni delle proprieta'
+		void BuildDefaultLayout(ImGuiID dockspace);
+		void DrawStatusBar();
+		void DrawEditMenu();
+		void DrawAddMenu();
+		void DrawViewMenu();
+		void DrawHelpMenu();
+		void DrawPreferencesWindow();
+		void DrawOutlinerPanel();
+		bool OutlinerGroup(const char* label, size_t count, bool defaultOpen);
+		bool OutlinerRow(const char* icon, const ImVec4& iconColor, const std::string& name, bool selected, const char* note = nullptr);
+		void DrawMaterialsPanel();
+		void DrawViewportPanel(float deltaTime);
+		void DrawViewportToolbar();
+		void DrawHud();
+		void DrawPropertiesPanel();
+		void DrawObjectSection();
+		void DrawMaterialSection();
+		void DrawWorldSection();
+		void DrawCameraSection();
+		void DrawRenderSection();
+		void DrawFilmSection();
+		void DrawDeveloperSection();
 
-		void DrawOutliner();
 		void DrawSelectionProperties();
-		void DrawGizmoToolbar();
-		void DrawAddObjectMenu();
 		bool DrawMaterialEditor(Material& material, int index); // true = la copia e' cambiata
-		void DrawMaterialEditorWindow();
 		void DrawTextureManager();
+		ObjectId SelectedMaterial() const;   // il materiale dell'oggetto selezionato, nil se non ne ha
 		void DrawDeletePopup();
 		void DeleteSelection();
 		bool CanDeleteSelection() const;
 		int SelectionCollectionSize(SelectionType type) const;
-		bool SelectableObjectRow(const char* label, SelectionType type, int index, int materialIndex); // -1 = nessun materiale
 		bool MaterialCombo(const char* label, ObjectId& material);
 		bool TextureCombo(const char* label, ObjectId& texture, TextureKind kind);
 
 		ObjectId EnsureMaterialExists();     // garantisce almeno un materiale, ne ritorna l'id
 		glm::vec3 SpawnPosition() const;     // davanti alla camera
-		void OpenMaterialEditor(int index);
 
 		// selezione + gizmo
 		void UpdateSelection();
@@ -140,10 +153,17 @@ namespace Lucerna {
 		ImVec2 m_ViewportSize{ 0.0f, 0.0f };
 		bool m_ViewportHovered = false;
 
-		// editor materiale flottante. L'indice va sempre validato contro Materials:
-		// al cambio scena la lista si svuota sotto i piedi, come per la selezione.
-		bool m_ShowMaterialEditor = false;
-		int m_MaterialEditorIndex = -1;
+		// I pannelli (redesign, concept A) e la sezione delle proprieta' aperta
+		enum class PropertiesTab { Object, Material, World, Camera, Render, Film, Developer };
+		PropertiesTab m_PropertiesTab = PropertiesTab::Object;
+		bool m_ShowOutliner = true, m_ShowMaterials = true, m_ShowProperties = true;
+		bool m_ShowHud = true, m_ShowDeveloper = false, m_ShowPreferences = false;
+		bool m_ResetLayout = false;
+		// Il materiale aperto nella sezione Material: quello cliccato nel pannello, o quello
+		// dell'oggetto selezionato quando la selezione cambia (m_MaterialFollowsSelection)
+		ObjectId m_EditedMaterial;
+		ObjectId m_MaterialFollowsSelection;
+		float m_UiScale = 1.0f; // la scala del monitor (HiDPI), per font e spaziature
 
 		// La richiesta e' separata dallo stato "aperta" perche' OpenPopup usa l'ID stack
 		// della finestra corrente: chiamandola dal bottone dentro "Settings" produrrebbe un
@@ -165,7 +185,7 @@ namespace Lucerna {
 		std::vector<std::string> m_TextureFiles;
 		int m_SelectedTextureFile = 0;
 
-		// diagnostica del picking (visibile nel pannello)
+		// diagnostica del picking (View > Developer)
 		glm::ivec2 m_LastPickPixel{ -1, -1 };
 		int m_LastPickType = -1;
 		int m_LastPickIndex = -1;

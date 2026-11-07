@@ -26,6 +26,8 @@ namespace Lucerna {
 		// Solo per chi lo chiede esplicitamente (il bottone "Reset Accumulation"): ogni modifica
 		// della scena o delle impostazioni che cambia l'immagine fa gia' ripartire l'accumulo.
 		void RestartAccumulation() { m_PTCounter = 1; }
+		// I frame accumulati dall'ultimo reset: per le letture della UI (campioni = frame x SPP)
+		int AccumulatedFrames() const { return m_PTCounter; }
 
 		// L'app segnala se la camera si sta muovendo: con RenderScale < 1 questo abbassa
 		// la risoluzione di render mentre ci si muove (piu' fluido), tornando a piena
