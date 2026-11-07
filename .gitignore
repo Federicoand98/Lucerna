@@ -1,53 +1,35 @@
+# ---- build
+PathTracing/build/
+PathTracing/out/
 CMakeLists.txt.user
-CMakeCache.txt
-CMakeFiles
-CMakeScripts
-Testing
-Makefile
-cmake_install.cmake
-install_manifest.txt
 compile_commands.json
-CTestTestfile.cmake
-_deps
 
-# Build results
-[Dd]ebug/
-[Dd]ebugPublic/
-[Rr]elease/
-[Rr]eleases/
-x64/
-x86/
-[Ww][Ii][Nn]32/
-[Aa][Rr][Mm]/
-[Aa][Rr][Mm]64/
-bld/
-[Bb]in/
-[Oo]bj/
-[Ll]og/
-[Ll]ogs/
-# Add this line
-out/
-.vs/
+# ---- output e stato dell'utente che l'app scrive in res (finche' non escono da res)
+PathTracing/res/Lucerna
+PathTracing/res/Lucerna.exe
+PathTracing/res/imgui.ini
+PathTracing/res/preferences.json
+PathTracing/res/screenshots/
+# le scene salvate dall'utente; quelle integrate (scenes/builtin) restano nel repo
+PathTracing/res/scenes/*.json
+
+# ---- asset grandi, non nel repo
+PathTracing/res/models/Sponza/
+PathTracing/res/models/dragon.obj
+
+# ---- file generati
+__pycache__/
+*.pyc
+*.blend1
+PathTracing/tools/pt_live/
+
+# ---- note personali e documenti superati
+PathTracing/TASKS*.md
+DEVELOPER_GUIDE.md
+
+# ---- editor e sistema
 .vscode/
 .idea/
-cmake-build-debug/
-PathTracing/build/
-cmake-build-relwithdebinfo/
-PathTracing/res/PathTracing.exe
-PathTracing/res/Lucerna
-PathTracing/res/preferences.json
-PathTracing/res/Lucerna.exe
-PathTracing/res/screenshots
-CNN_Denoiser/training
-CNN-Denoiser/venv
-CNN-Denoiser/datasets
-CNN-Denoiser/models
-CNN-Denoiser/logs
-CNN-Denoiser/test_data.pkl
-CNN-Denoiser/test_path.pkl
-CNN-Denoiser/train_data.pkl
-CNN-Denoiser/train_path.pkl
+.vs/
+.claude/
 .DS_Store
-CNN-Denoiser/.DS_Store
-CNN-Denoiser/__pycache__/
-BlenderFiles/
