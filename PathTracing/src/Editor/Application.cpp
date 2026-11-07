@@ -6,6 +6,7 @@
 #include "Editor/Input.h"
 #include "Core/Random.h"
 #include "Serialization/SceneSerializer.h"
+#include <functional>
 #include "Import/SceneFiles.h"
 #include "Serialization/BuiltinScenes.h"
 #include "Import/Importer.h"
@@ -15,6 +16,7 @@ namespace Lucerna {
 
 	// il testo prima di ### e' il titolo, il resto e' l'ID stabile
 	static const char* kDeletePopupId = "Delete object?###DeleteObject";
+	static const char* kSavePromptId = "Save changes?###SaveChanges";
 
 	static Application* s_Instance = nullptr;
 
@@ -52,6 +54,8 @@ namespace Lucerna {
 	Application::Application() : m_Window(nullptr), m_Height(900), m_Width(1600), m_IsRunning(true),
 								 m_Camera(45.0f, 0.1f, 100.0f) {
 		s_Instance = this;
+		// Prima delle scene: aprire un file aggiorna i file recenti, che stanno nelle preferenze
+		m_Preferences = Preferences::Load();
 
 		// Le scene integrate sono file (issue #28). PT_SCENE=<numero o nome> sceglie quella di
 		// partenza; senza, Setup 2.
@@ -66,13 +70,12 @@ namespace Lucerna {
 			std::cerr << std::endl;
 		}
 
-		// Test/CI headless: PT_GLTF=<file> apre una scena glTF al posto di quella di default.
+		// Test/CI headless: PT_GLTF=<file> o PT_SCENE_FILE=<file.json> aprono un file al posto
+		// della scena di default; il documento li apre entrambi, in qualunque formato
 		if (const char* g = getenv("PT_GLTF"))
-			OpenFile(g); // qualunque formato del registry, non solo glTF
-		// PT_SCENE_FILE=<file.json> apre una scena salvata (formato 2)
+			OpenDocument(g);
 		if (const char* f = getenv("PT_SCENE_FILE"))
-			if (SceneSerializer(m_Scene, m_Assets, &m_Renderer.Settings).Deserialize(f))
-				m_CurrentScene = -1;
+			OpenDocument(f);
 
 		// Test/CI headless: PT_NEE=0 forza la NEE spenta (A/B col light sampling).
 		// PT_CAM=x,y,z,dx,dy,dz: posizione e direzione della camera, per catture ripetibili
@@ -125,7 +128,6 @@ namespace Lucerna {
 
 		// Test/CI headless: PT_NOVSYNC=1. Con la vsync il driver abbassa i clock per riempire il
 		// frame, quindi i tempi GPU non misurano il costo reale delle passate.
-		m_Preferences = Preferences::Load();
 		m_Vsync = m_Preferences.Vsync && getenv("PT_NOVSYNC") == nullptr;
 		if (!m_Vulkan.Initialize(m_Window, m_Vsync))
 			return false;
@@ -186,8 +188,14 @@ namespace Lucerna {
 		m_Renderer.OnResize(m_Width, m_Height);
 		m_Renderer.Initialize();
 
-		while (!glfwWindowShouldClose(m_Window) && m_IsRunning) {
+		while (m_IsRunning) {
 			glfwPollEvents();
+
+			// Chiudere la finestra chiede prima di salvare, se ci sono modifiche
+			if (glfwWindowShouldClose(m_Window)) {
+				glfwSetWindowShouldClose(m_Window, GLFW_FALSE);
+				WhenSaved([this] { m_IsRunning = false; });
+			}
 
 			if (!m_Vulkan.BeginFrame())
 				continue;
@@ -210,6 +218,10 @@ namespace Lucerna {
 
 			ImGui::NewFrame();
 			ImGuizmo::BeginFrame();
+
+			// Prima del dockspace: la barra di menu riduce l'area di lavoro che il dockspace occupa
+			DrawMainMenu();
+			HandleShortcuts();
 
 			{
 				static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
@@ -249,6 +261,8 @@ namespace Lucerna {
 			// dopo UpdateSelection: e' li' che Canc chiama OpenPopup, cosi' la modale
 			// compare nello stesso frame in cui viene richiesta
 			DrawDeletePopup();
+			DrawSavePrompt();
+			UpdateWindowTitle();
 			Render(m_DeltaTime);
 
 			ImGui::Render();
@@ -293,31 +307,201 @@ namespace Lucerna {
 		}
 	}
 
-	// Apre un file, di qualunque formato il registry conosca (issue #27), e lo registra per il
-	// live-link. Se il file non si legge la scena resta intatta e il watch non si arma. Al
-	// successo salva path e mtime: da qui in poi PollLiveLink lo sorveglia.
-	bool Application::OpenFile(const std::string& path) {
+	// ---------------------------------------------------------------- documento
+
+	// Apre un file come documento: un .json e' una scena, ogni altro formato passa dagli importer
+	// (issue #27). Se il file non si legge scena e documento restano come erano. Un file importato
+	// si sorveglia per il live-link: da qui in poi PollLiveLink lo riapre quando cambia.
+	bool Application::OpenDocument(const std::string& path) {
 		m_Selection = {};
-		if (!Lucerna::OpenFile(path, m_Scene, m_Assets))
+		if (!m_Document.Open(path, m_Scene, m_Assets, m_Renderer.Settings))
 			return false;
 
-		m_WatchPath = path;
 		m_CurrentScene = -1;
-		std::error_code ec;
-		m_WatchMtime = std::filesystem::last_write_time(path, ec); // ec ignorato: se fallisce, 0 -> ricarica al primo poll
+		m_WatchPath.clear();
+		if (m_Document.Origin() == DocumentOrigin::Imported) {
+			m_WatchPath = m_Document.Path();
+			std::error_code ec;
+			m_WatchMtime = std::filesystem::last_write_time(m_WatchPath, ec); // ec ignorato: se fallisce, 0 -> ricarica al primo poll
+		}
+		RememberRecent(m_Document.Path());
 		return true;
 	}
 
-	// Una scena integrata e' un file di scena come gli altri. La selezione si azzera prima: la
-	// finestra "Viewport" viene disegnata piu' avanti in questo stesso frame e userebbe gli
-	// indici della scena vecchia.
+	// I file aperti o salvati finiscono in Open Recent. Le esecuzioni da script non lo toccano.
+	void Application::RememberRecent(const std::string& path) {
+		if (getenv("PT_SHOT"))
+			return;
+		m_Preferences.AddRecent(path);
+		m_Preferences.Save();
+	}
+
+	// Una scena integrata e' un file di scena come gli altri, ma un modello: Save chiede dove
+	// salvare. La selezione si azzera prima: la finestra "Viewport" viene disegnata piu' avanti
+	// in questo stesso frame e userebbe gli indici della scena vecchia.
 	bool Application::LoadBuiltinScene(int index) {
 		m_Selection = {};
-		if (!SceneSerializer(m_Scene, m_Assets, &m_Renderer.Settings).Deserialize(m_BuiltinScenes[index].Path))
+		if (!m_Document.OpenBuiltin(m_BuiltinScenes[index], m_Scene, m_Assets, m_Renderer.Settings))
 			return false;
 		m_CurrentScene = index;
-		m_WatchPath.clear(); // il live-link e' del file aperto con Open
+		m_WatchPath.clear(); // il live-link e' dei file importati
 		return true;
+	}
+
+	void Application::NewDocument() {
+		m_Selection = {};
+		m_Document.New(m_Scene, m_Assets, m_Renderer.Settings);
+		m_CurrentScene = -1;
+		m_WatchPath.clear();
+	}
+
+	// Save riscrive il file di scena aperto; una scena nuova, integrata o importata chiede dove
+	// salvare. false = non salvato (dialog annullato o scrittura fallita).
+	bool Application::SaveDocument() {
+		if (m_Document.CanSaveInPlace())
+			return m_Document.Save(m_Scene, m_Assets, m_Renderer.Settings);
+		return SaveDocumentAs();
+	}
+
+	bool Application::SaveDocumentAs() {
+		const std::filesystem::path current(m_Document.Path());
+		const std::string suggested = m_Document.CanSaveInPlace() ? current.string()
+			: (std::filesystem::path("scenes") / (current.empty() ? std::string("untitled") : current.stem().string())).string() + ".json";
+		std::string path = pfd::save_file("Save scene", suggested, { "Scene", "*.json" }).result();
+		if (path.empty())
+			return false;
+		if (std::filesystem::path(path).extension() != ".json")
+			path += ".json";
+		if (!m_Document.SaveAs(path, m_Scene, m_Assets, m_Renderer.Settings))
+			return false;
+		m_CurrentScene = -1;
+		m_WatchPath.clear(); // ora il documento e' il .json, non il file importato
+		RememberRecent(m_Document.Path());
+		return true;
+	}
+
+	// Un'azione che butterebbe via le modifiche non salvate (New, Open, chiudere, il live-link)
+	// passa da qui: senza modifiche parte subito, altrimenti prima si chiede. Le esecuzioni da
+	// script (PT_SHOT) non chiedono mai.
+	void Application::WhenSaved(std::function<void()> action) {
+		if (!m_Document.IsModified(m_Scene, m_Assets, m_Renderer.Settings) || getenv("PT_SHOT")) {
+			action();
+			return;
+		}
+		m_PendingAction = std::move(action);
+		m_SavePromptRequested = true;
+	}
+
+	// Modale: va aperta fuori dal Begin/End di qualsiasi finestra, come quella di Delete
+	void Application::DrawSavePrompt() {
+		if (m_SavePromptRequested) {
+			m_SavePromptRequested = false;
+			ImGui::OpenPopup(kSavePromptId);
+		}
+		ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+		if (!ImGui::BeginPopupModal(kSavePromptId, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+			return;
+
+		ImGui::Text("Save changes to %s?", m_Document.DisplayName().c_str());
+		ImGui::TextDisabled("Your changes will be lost if you don't save them.");
+		ImGui::Spacing();
+		std::function<void()> run;
+		if (ImGui::Button("Save", ImVec2(120, 0))) {
+			if (SaveDocument())
+				run = std::move(m_PendingAction);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SetItemDefaultFocus();
+		ImGui::SameLine();
+		if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+			run = std::move(m_PendingAction);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+			m_PendingAction = {};
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+		if (run)
+			run();
+	}
+
+	void Application::ShowOpenDialog() {
+		std::vector<std::string> filters = FileFilters();
+		filters[1] += " *.json";                                   // "Supported files" comprende le scene
+		filters.insert(filters.begin() + 2, { "Scene", "*.json" });
+		const auto selection = pfd::open_file("Open", "scenes", filters).result();
+		if (!selection.empty())
+			WhenSaved([this, path = selection[0]] { OpenDocument(path); });
+	}
+
+	// Il menu File: resta anche dopo il redesign della UI
+	void Application::DrawMainMenu() {
+		if (!ImGui::BeginMainMenuBar())
+			return;
+		if (ImGui::BeginMenu("File")) {
+			if (ImGui::MenuItem("New", "Ctrl+N"))
+				WhenSaved([this] { NewDocument(); });
+			if (ImGui::MenuItem("Open...", "Ctrl+O"))
+				ShowOpenDialog();
+			if (ImGui::BeginMenu("Open Recent")) {
+				// un file che non c'e' piu' sparisce dall'elenco
+				std::vector<std::string>& recent = m_Preferences.RecentFiles;
+				const size_t before = recent.size();
+				recent.erase(std::remove_if(recent.begin(), recent.end(),
+					[](const std::string& f) { return !std::filesystem::exists(f); }), recent.end());
+				if (recent.size() != before)
+					m_Preferences.Save();
+				if (recent.empty())
+					ImGui::TextDisabled("no recent files");
+				for (const std::string& file : recent)
+					if (ImGui::MenuItem(file.c_str()))
+						WhenSaved([this, path = file] { OpenDocument(path); });
+				ImGui::EndMenu();
+			}
+			if (ImGui::BeginMenu("Built-in Scenes")) {
+				for (int i = 0; i < static_cast<int>(m_BuiltinScenes.size()); i++)
+					if (ImGui::MenuItem(m_BuiltinScenes[i].DisplayName.c_str(), nullptr, i == m_CurrentScene))
+						WhenSaved([this, i] { LoadBuiltinScene(i); });
+				ImGui::EndMenu();
+			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Save", "Ctrl+S"))
+				SaveDocument();
+			if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
+				SaveDocumentAs();
+			ImGui::Separator();
+			if (ImGui::MenuItem("Quit", "Ctrl+Q"))
+				WhenSaved([this] { m_IsRunning = false; });
+			ImGui::EndMenu();
+		}
+		ImGui::EndMainMenuBar();
+	}
+
+	// Le scorciatoie del menu File. Non mentre si scrive in un campo di testo.
+	void Application::HandleShortcuts() {
+		const ImGuiIO& io = ImGui::GetIO();
+		if (!io.KeyCtrl || io.WantTextInput)
+			return;
+		if (ImGui::IsKeyPressed(ImGuiKey_N, false))
+			WhenSaved([this] { NewDocument(); });
+		else if (ImGui::IsKeyPressed(ImGuiKey_O, false))
+			ShowOpenDialog();
+		else if (ImGui::IsKeyPressed(ImGuiKey_S, false))
+			io.KeyShift ? SaveDocumentAs() : SaveDocument();
+		else if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
+			WhenSaved([this] { m_IsRunning = false; });
+	}
+
+	// "Lucerna - sponza.json*": il file aperto, e un asterisco se ci sono modifiche non salvate
+	void Application::UpdateWindowTitle() {
+		const std::string title = "Lucerna - " + m_Document.DisplayName()
+			+ (m_Document.IsModified(m_Scene, m_Assets, m_Renderer.Settings) ? "*" : "");
+		if (title != m_WindowTitle) {
+			glfwSetWindowTitle(m_Window, title.c_str());
+			m_WindowTitle = title;
+		}
 	}
 
 	// Il filtro del file dialog: le estensioni di tutti gli importer, poi un formato per riga
@@ -352,10 +536,10 @@ namespace Lucerna {
 		// Aggiorna il timestamp PRIMA di ricaricare: se il parse fallisce (export a meta',
 		// file troncato) Open lascia la scena com'e' e non ri-tenta all'infinito sullo stesso
 		// timestamp; ci riprovera' al prossimo cambio di mtime (Blender riscrive).
+		// Con modifiche non salvate si chiede: Cancel salta questo export e resta in ascolto.
 		m_WatchMtime = mtime;
 		std::cout << "Live-link: rilevato cambio, riapro " << m_WatchPath << std::endl;
-		m_Selection = {};
-		Lucerna::OpenFile(m_WatchPath, m_Scene, m_Assets);
+		WhenSaved([this, path = m_WatchPath] { OpenDocument(path); });
 	}
 
 	void Application::CalculateTime() {
@@ -471,40 +655,12 @@ namespace Lucerna {
 	void Application::DrawSceneTab() {
 		ImGui::Spacing();
 
-		// Le scene integrate: i file di res/scenes/builtin, ognuno con la sua inquadratura e le sue
-		// impostazioni di render (issue #28)
-		const char* current = m_CurrentScene >= 0 && m_CurrentScene < static_cast<int>(m_BuiltinScenes.size())
-			? m_BuiltinScenes[m_CurrentScene].DisplayName.c_str() : "";
-		if (ImGui::BeginCombo("Scene", current)) {
-			for (int i = 0; i < static_cast<int>(m_BuiltinScenes.size()); i++)
-				if (ImGui::Selectable(m_BuiltinScenes[i].DisplayName.c_str(), i == m_CurrentScene))
-					LoadBuiltinScene(i);
-			ImGui::EndCombo();
-		}
-
-		// Open (issue #27): rimpiazza la scena col contenuto di un file, in qualunque formato il
-		// registry conosca. Il path si puo' incollare o scegliere col file dialog nativo ("...").
-		static char openPath[512] = "models/gltf_test/BoxTextured/BoxTextured.gltf";
-		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
-		ImGui::InputText("##openpath", openPath, sizeof(openPath));
-		ImGui::SameLine();
-		if (ImGui::Button("...")) {
-			// Dialog nativo (zenity su Linux). Parte dalla cartella del path corrente, se valida.
-			const std::string start = std::filesystem::path(openPath).parent_path().string();
-			const auto selection = pfd::open_file("Open", start, FileFilters()).result();
-			if (!selection.empty()) {
-				std::snprintf(openPath, sizeof(openPath), "%s", selection[0].c_str());
-				OpenFile(openPath); // la camera del file, se c'e', diventa l'inquadratura
-			}
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Open"))
-			OpenFile(openPath);
-		if (!m_WatchPath.empty()) {
-			ImGui::SameLine();
+		// Il file aperto: aprire, salvare e le scene integrate stanno nel menu File
+		ImGui::Text("%s%s", m_Document.DisplayName().c_str(), m_Document.IsModified(m_Scene, m_Assets, m_Renderer.Settings) ? " (modified)" : "");
+		if (!m_Document.Path().empty())
+			ImGui::TextDisabled("%s", m_Document.Path().c_str());
+		if (!m_WatchPath.empty())
 			ImGui::Checkbox("Live-link", &m_LiveLink);
-			ImGui::TextDisabled("watch: %s", m_WatchPath.c_str());
-		}
 
 		{
 			bool environment = m_Scene.EnvironmentMapping();
@@ -530,27 +686,6 @@ namespace Lucerna {
 			if (changed)
 				m_Scene.SetSun(sun);
 		}
-
-		ImGui::SeparatorText("Scene file");
-		ImGui::PushItemWidth(200.0f);
-		ImGui::InputText("Name", m_SceneFilename, sizeof(m_SceneFilename));
-		ImGui::PopItemWidth();
-
-		const std::string scenePath = std::string("scenes/") + m_SceneFilename + ".json";
-		if (ImGui::Button("Save")) {
-			std::filesystem::create_directories("scenes");
-			SceneSerializer(m_Scene, m_Assets, &m_Renderer.Settings).Serialize(scenePath);
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Load")) {
-			// la scena caricata si segna tutta cambiata: il renderer la ricarica come un cambio scena
-			if (SceneSerializer(m_Scene, m_Assets, &m_Renderer.Settings).Deserialize(scenePath)) {
-				m_Selection = {};
-				m_CurrentScene = -1;
-			}
-		}
-		ImGui::SameLine();
-		ImGui::TextDisabled("%s", scenePath.c_str());
 
 		ImGui::SeparatorText("Add");
 		DrawAddObjectMenu();
@@ -1440,8 +1575,12 @@ namespace Lucerna {
 		if (ImGui::Checkbox("Lock view to camera", &m_Renderer.View.LockViewToCamera) && m_Renderer.View.LockViewToCamera)
 			m_Camera.SetView(m_Scene.Camera().Position, m_Scene.Camera().Direction); // torna all'inquadratura
 		ImGui::BeginDisabled(m_Renderer.View.LockViewToCamera);
-		if (ImGui::Button("Align camera to view")) // la vista e' gia' li': l'immagine non cambia
-			m_Scene.MoveCamera(m_Camera.GetPosition(), m_Camera.GetDirection());
+		if (ImGui::Button("Align camera to view")) { // cambia l'inquadratura salvata: e' una modifica
+			SceneCamera camera = m_Scene.Camera();
+			camera.Position = m_Camera.GetPosition();
+			camera.Direction = m_Camera.GetDirection();
+			m_Scene.SetCamera(camera);
+		}
 		ImGui::EndDisabled();
 		ImGui::TextDisabled(m_Renderer.View.LockViewToCamera ? "navigating moves the scene camera"
 		                                                      : "free view: the scene camera stays put");

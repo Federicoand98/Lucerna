@@ -3,6 +3,7 @@
 #include "Scene/Scene.h"
 #include "Import/SceneFiles.h"
 #include "Core/Json.h"
+#include "Core/Paths.h"
 #include "Render/RenderSettings.h"
 
 #include <nlohmann/json.hpp>
@@ -64,8 +65,10 @@ namespace Lucerna {
 	// ---- Serialize ---------------------------------------------------------
 	// Formato 2 (issue #26): gli asset in un blocco a parte, gli oggetti li citano per id. Le mesh
 	// salvano la sorgente (file, e per un glTF mesh e primitive), non i triangoli.
+	// Formato 3: i path di texture e mesh sono relativi alla cartella del file di scena, cosi' la
+	// scena si sposta insieme ai suoi modelli. Il 2 (path relativi a res/) si legge ancora.
 
-	static constexpr int FORMAT_VERSION = 2;
+	static constexpr int FORMAT_VERSION = 3;
 
 	bool SceneSerializer::Serialize(const std::string& path) const {
 		const Scene& w = m_Scene;
@@ -82,6 +85,10 @@ namespace Lucerna {
 		root["assets"]["textures"] = ObjectsToJson(a.m_Textures);
 		root["assets"]["materials"] = ObjectsToJson(a.m_Materials);
 		root["assets"]["meshes"] = ObjectsToJson(a.m_Meshes);
+		for (json& t : root["assets"]["textures"])
+			t["path"] = RelativeToFile(t["path"].get<std::string>(), path);
+		for (json& m : root["assets"]["meshes"])
+			m["source"]["file"] = RelativeToFile(m["source"]["file"].get<std::string>(), path);
 
 		root["punctualLights"] = ObjectsToJson(w.m_PunctualLights);
 		root["spheres"] = ObjectsToJson(w.m_Spheres);
@@ -125,9 +132,10 @@ namespace Lucerna {
 			std::cerr << "Deserialize: JSON non valido (" << e.what() << ")" << std::endl;
 			return false;
 		}
-		if (root.value("version", 1) != FORMAT_VERSION) {
-			std::cerr << "Deserialize: " << path << " e' nel formato " << root.value("version", 1)
-			          << ", si legge solo il " << FORMAT_VERSION << std::endl;
+		const int version = root.value("version", 1);
+		if (version != 2 && version != FORMAT_VERSION) {
+			std::cerr << "Deserialize: " << path << " e' nel formato " << version
+			          << ", si leggono il 2 e il " << FORMAT_VERSION << std::endl;
 			return false;
 		}
 
@@ -148,6 +156,11 @@ namespace Lucerna {
 		ObjectsFromJson(assets.value("textures", json::array()), a.m_Textures);
 		ObjectsFromJson(assets.value("materials", json::array()), a.m_Materials);
 		ObjectsFromJson(assets.value("meshes", json::array()), a.m_Meshes);
+		// nel formato 2 i path erano gia' relativi a res/
+		for (auto& t : a.m_Textures)
+			t.Path = version == 2 ? CanonicalPath(t.Path) : ResolveFromFile(t.Path, path);
+		for (auto& m : a.m_Meshes)
+			m.Source.File = version == 2 ? CanonicalPath(m.Source.File) : ResolveFromFile(m.Source.File, path);
 
 		ObjectsFromJson(root.value("punctualLights", json::array()), w.m_PunctualLights);
 		ObjectsFromJson(root.value("spheres", json::array()), w.m_Spheres);
@@ -168,8 +181,8 @@ namespace Lucerna {
 		std::cout << "Scena caricata: " << path << " (" << w.m_Spheres.size() << " sfere, "
 			<< w.m_Boxes.size() << " box, " << w.m_Meshes.size() << " istanze di " << a.m_Meshes.size()
 			<< " mesh, " << a.m_Materials.size() << " materiali)" << std::endl;
-		w.m_Changes = SceneChanges;
-		a.m_Changes = AssetChanges;
+		w.Touch(SceneChanges);
+		a.Touch(AssetChanges);
 		return true;
 	}
 }

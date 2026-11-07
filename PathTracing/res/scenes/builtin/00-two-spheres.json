@@ -435,7 +435,7 @@
         "materialSlots": [],
         "name": "guitar.obj",
         "source": {
-          "file": "models/guitar.obj",
+          "file": "../../models/guitar.obj",
           "mesh": -1,
           "primitive": -1
         }
@@ -446,7 +446,7 @@
         "id": "de05afacb86211fa",
         "kind": "color",
         "name": "uv_grid",
-        "path": "textures/Albedo/uv_grid.png"
+        "path": "../../textures/Albedo/uv_grid.png"
       }
     ]
   },
@@ -543,5 +543,5 @@
     "enabled": false,
     "irradiance": 3.0
   },
-  "version": 2
+  "version": 3
 }

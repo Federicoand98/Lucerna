@@ -6,7 +6,7 @@ namespace Lucerna {
 	void Scene::Clear() {
 		m_Spheres.clear();
 		m_Quads.clear();
-		m_Changes = SceneChanges;
+		Touch(SceneChanges);
 		m_Meshes.clear();
 		m_Boxes.clear();
 		m_Sun = SunParams{}; // spento: ogni scena accende il suo
@@ -17,7 +17,7 @@ namespace Lucerna {
 	// Un'istanza di asset. I triangoli restano in LOCAL SPACE: la posizione vive nella Transform.
 	int Scene::AddMesh(const Mesh& mesh, const std::string& name) {
 		m_Meshes.Add(mesh, name);
-		m_Changes |= InstancesChanged | MeshesChanged;
+		Touch(InstancesChanged | MeshesChanged);
 		return static_cast<int>(m_Meshes.size()) - 1;
 	}
 
@@ -36,7 +36,7 @@ namespace Lucerna {
 			return false;
 
 		m_Spheres.erase(m_Spheres.begin() + sphereIndex);
-		m_Changes |= PrimitivesChanged;
+		Touch(PrimitivesChanged);
 		return true;
 	}
 
@@ -58,7 +58,7 @@ namespace Lucerna {
 			if (static_cast<int>(box.index) > quadIndex)
 				box.index -= 1.0f;
 
-		m_Changes |= PrimitivesChanged;
+		Touch(PrimitivesChanged);
 		return true;
 	}
 
@@ -77,7 +77,7 @@ namespace Lucerna {
 			if (static_cast<int>(box.index) > first)
 				box.index -= 6.0f;
 
-		m_Changes |= PrimitivesChanged;
+		Touch(PrimitivesChanged);
 		return true;
 	}
 
@@ -87,7 +87,7 @@ namespace Lucerna {
 		if (meshIndex < 0 || meshIndex >= static_cast<int>(m_Meshes.size()))
 			return false;
 		m_Meshes.erase(m_Meshes.begin() + meshIndex);
-		m_Changes |= InstancesChanged | MeshesChanged;
+		Touch(InstancesChanged | MeshesChanged);
 		return true;
 	}
 
@@ -178,7 +178,7 @@ namespace Lucerna {
 		}
 
 		m_Boxes.Add(box);
-		m_Changes |= PrimitivesChanged;
+		Touch(PrimitivesChanged);
 	}
 
 	// ---- modifica (issue #25): ogni Set registra cosa ha toccato, il RenderScene aggiorna solo quello
@@ -196,10 +196,10 @@ namespace Lucerna {
 	}
 
 	void Scene::Set(const ObjectId& id, const Sphere& sphere) {
-		if (Assign(m_Spheres, id, sphere)) m_Changes |= PrimitivesChanged;
+		if (Assign(m_Spheres, id, sphere)) Touch(PrimitivesChanged);
 	}
 	void Scene::Set(const ObjectId& id, const Quad& quad) {
-		if (Assign(m_Quads, id, quad)) m_Changes |= PrimitivesChanged;
+		if (Assign(m_Quads, id, quad)) Touch(PrimitivesChanged);
 	}
 	void Scene::Set(const ObjectId& id, const Box& box) {
 		auto* object = m_Boxes.Find(id);
@@ -207,7 +207,7 @@ namespace Lucerna {
 			return;
 		*object = box;
 		object->UpdateBox(m_Quads); // un box e' 6 quad: vanno riscritti
-		m_Changes |= PrimitivesChanged;
+		Touch(PrimitivesChanged);
 	}
 	void Scene::Set(const ObjectId& id, const Mesh& mesh) {
 		auto* object = m_Meshes.Find(id);
@@ -216,18 +216,18 @@ namespace Lucerna {
 		// l'asset e' la geometria: qui cambiano solo transform e materiale
 		object->Transform = mesh.Transform;
 		object->Material = mesh.Material;
-		m_Changes |= MeshesChanged;
+		Touch(MeshesChanged);
 	}
 	void Scene::Set(const ObjectId& id, const PunctualLight& light) {
-		if (Assign(m_PunctualLights, id, light)) m_Changes |= LightsChanged;
+		if (Assign(m_PunctualLights, id, light)) Touch(LightsChanged);
 	}
 	void Scene::SetSun(const SunParams& sun) {
 		m_Sun = sun;
-		m_Changes |= LightsChanged;
+		Touch(LightsChanged);
 	}
 	void Scene::SetCamera(const SceneCamera& camera) {
 		m_Camera = camera;
-		m_Changes |= CameraChanged;
+		Touch(CameraChanged);
 	}
 	void Scene::MoveCamera(const glm::vec3& position, const glm::vec3& direction) {
 		m_Camera.Position = position;
@@ -236,7 +236,7 @@ namespace Lucerna {
 	void Scene::SetBackground(const glm::vec3& color, bool environmentMapping) {
 		m_BackgroundColor = color;
 		m_EnvironmentMapping = environmentMapping;
-		m_Changes |= EnvironmentChanged;
+		Touch(EnvironmentChanged);
 	}
 
 	// gli id sono unici in tutta la scena: basta cercarlo in ogni lista
@@ -244,6 +244,7 @@ namespace Lucerna {
 		auto rename = [&](auto& list) {
 			if (auto* object = list.Find(id)) {
 				list.Rename(*object, name);
+				Touch(NoChange); // non cambia l'immagine, ma il file si'
 				return true;
 			}
 			return false;
@@ -253,24 +254,24 @@ namespace Lucerna {
 
 	int Scene::AddSphere(const Sphere& sphere) {
 		m_Spheres.Add(sphere);
-		m_Changes |= PrimitivesChanged;
+		Touch(PrimitivesChanged);
 		return static_cast<int>(m_Spheres.size()) - 1;
 	}
 	int Scene::AddQuad(const Quad& quad) {
 		m_Quads.Add(quad);
-		m_Changes |= PrimitivesChanged;
+		Touch(PrimitivesChanged);
 		return static_cast<int>(m_Quads.size()) - 1;
 	}
 	int Scene::AddLight(const PunctualLight& light, const std::string& name) {
 		m_PunctualLights.Add(light, name);
-		m_Changes |= LightsChanged;
+		Touch(LightsChanged);
 		return static_cast<int>(m_PunctualLights.size()) - 1;
 	}
 	bool Scene::RemoveLight(int lightIndex) {
 		if (lightIndex < 0 || lightIndex >= static_cast<int>(m_PunctualLights.size()))
 			return false;
 		m_PunctualLights.erase(m_PunctualLights.begin() + lightIndex);
-		m_Changes |= LightsChanged;
+		Touch(LightsChanged);
 		return true;
 	}
 

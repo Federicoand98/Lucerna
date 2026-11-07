@@ -22,7 +22,7 @@ namespace Lucerna {
 	}
 
 	ObjectId AssetLibrary::AddMaterial(const Material& material, const std::string& name) {
-		m_Changes |= MaterialsChanged;
+		Touch(MaterialsChanged);
 		return m_Materials.Add(material, name).Id;
 	}
 
@@ -30,7 +30,7 @@ namespace Lucerna {
 	void AssetLibrary::Set(const ObjectId& id, const Material& material) {
 		if (auto* object = m_Materials.Find(id)) {
 			*object = material;
-			m_Changes |= MaterialsChanged;
+			Touch(MaterialsChanged);
 		}
 	}
 
@@ -38,7 +38,7 @@ namespace Lucerna {
 		for (const auto& texture : m_Textures)
 			if (texture.Path == path && texture.Kind == kind)
 				return texture.Id;
-		m_Changes |= TexturesChanged;
+		Touch(TexturesChanged);
 		return m_Textures.Add({ path, kind }, std::filesystem::path(path).stem().string()).Id;
 	}
 
@@ -47,12 +47,12 @@ namespace Lucerna {
 		if (index < 0 || IsTextureUsed(id))
 			return false;
 		m_Textures.erase(m_Textures.begin() + index);
-		m_Changes |= TexturesChanged;
+		Touch(TexturesChanged);
 		return true;
 	}
 
 	ObjectId AssetLibrary::AddMesh(const MeshAsset& mesh, const std::string& name) {
-		m_Changes |= GeometryChanged;
+		Touch(GeometryChanged);
 		return m_Meshes.Add(mesh, name).Id;
 	}
 
@@ -62,7 +62,7 @@ namespace Lucerna {
 			if (mesh.Triangles.empty())
 				missing.push_back(&mesh);
 		if (!missing.empty())
-			m_Changes |= GeometryChanged;
+			Touch(GeometryChanged);
 		return missing;
 	}
 
@@ -70,6 +70,7 @@ namespace Lucerna {
 		auto rename = [&](auto& list) {
 			if (auto* object = list.Find(id)) {
 				list.Rename(*object, name);
+				Touch(NoChange); // non cambia l'immagine, ma il file si'
 				return true;
 			}
 			return false;
@@ -81,11 +82,11 @@ namespace Lucerna {
 		m_Materials.clear();
 		m_Textures.clear();
 		m_Meshes.clear();
-		m_Changes |= AssetChanges;
+		Touch(AssetChanges);
 	}
 
 	void AssetLibrary::Replace(AssetLibrary&& other) {
 		*this = std::move(other);
-		m_Changes = AssetChanges;
+		Touch(AssetChanges);
 	}
 }

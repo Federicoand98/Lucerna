@@ -13,6 +13,8 @@
 #include "Vulkan/VulkanContext.h"
 #include "Render/Renderer.h"
 #include "Serialization/BuiltinScenes.h"
+#include "Editor/Document.h"
+#include <functional>
 #include "Editor/Camera.h"
 #include "ImGuizmo.h"
 #include "ptpch.h"
@@ -111,8 +113,19 @@ namespace Lucerna {
 
 		// Apre un file (rimpiazzando la scena) e registra path+mtime per il live-link;
 		// PollLiveLink controlla ogni frame se il file e' cambiato e in tal caso lo riapre.
-		bool OpenFile(const std::string& path);
+		// ---- documento (il menu File)
+		bool OpenDocument(const std::string& path);
 		bool LoadBuiltinScene(int index);
+		void NewDocument();
+		bool SaveDocument();      // riscrive il file aperto, o chiede dove salvare
+		bool SaveDocumentAs();
+		void WhenSaved(std::function<void()> action); // chiede di salvare prima di un'azione che butta via le modifiche
+		void DrawSavePrompt();
+		void ShowOpenDialog();
+		void DrawMainMenu();
+		void HandleShortcuts();
+		void UpdateWindowTitle();
+		void RememberRecent(const std::string& path);
 		void PollLiveLink();
 		static std::vector<std::string> FileFilters(); // per il file dialog, dal registry degli importer
 	private:
@@ -146,7 +159,6 @@ namespace Lucerna {
 		bool m_PickForFocus = false;
 
 		// salva/carica scena
-		char m_SceneFilename[128] = "scene";
 
 		// creazione oggetti
 		ObjectId m_NewObjectMaterial;
@@ -170,6 +182,10 @@ namespace Lucerna {
 
 		// Live-link glTF (ADR 0003): il renderer osserva il file caricato e lo ricarica quando
 		// cambia (tipicamente perche' Blender l'ha ri-esportato su save). Read-only verso Blender.
+		Document m_Document;                            // il file aperto e se ci sono modifiche da salvare
+		std::function<void()> m_PendingAction;          // in attesa della risposta a "Save changes?"
+		bool m_SavePromptRequested = false;
+		std::string m_WindowTitle;
 		std::vector<BuiltinScene> m_BuiltinScenes;     // res/scenes/builtin (issue #28)
 		int m_CurrentScene = -1;                        // in m_BuiltinScenes, -1 = un file aperto o caricato
 		std::string m_WatchPath;                        // il file aperto, vuoto = nessuno

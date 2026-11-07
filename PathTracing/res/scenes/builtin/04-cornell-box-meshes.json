@@ -435,7 +435,7 @@
         "materialSlots": [],
         "name": "queen.obj",
         "source": {
-          "file": "models/queen.obj",
+          "file": "../../models/queen.obj",
           "mesh": -1,
           "primitive": -1
         }
@@ -445,7 +445,7 @@
         "materialSlots": [],
         "name": "king.obj",
         "source": {
-          "file": "models/king.obj",
+          "file": "../../models/king.obj",
           "mesh": -1,
           "primitive": -1
         }
@@ -455,7 +455,7 @@
         "materialSlots": [],
         "name": "knight.obj",
         "source": {
-          "file": "models/knight.obj",
+          "file": "../../models/knight.obj",
           "mesh": -1,
           "primitive": -1
         }
@@ -743,5 +743,5 @@
     "enabled": false,
     "irradiance": 3.0
   },
-  "version": 2
+  "version": 3
 }

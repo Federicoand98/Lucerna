@@ -1,11 +1,13 @@
 #include "Import/SceneFiles.h"
 #include "Import/Importer.h"
+#include "Core/Paths.h"
 
 #include <map>
 
 namespace Lucerna {
 
-	bool OpenFile(const std::string& path, Scene& scene, AssetLibrary& assets) {
+	bool OpenFile(const std::string& file, Scene& scene, AssetLibrary& assets) {
+		const std::string path = CanonicalPath(file); // un modello e' lo stesso asset da qualunque path arrivi
 		const Importer* importer = FindImporter(path);
 		if (importer == nullptr) {
 			std::cerr << "Open: nessun importer per " << path << std::endl;
@@ -48,7 +50,8 @@ namespace Lucerna {
 		return true;
 	}
 
-	int AddFile(const std::string& path, Scene& scene, AssetLibrary& assets, const glm::mat4& placement, const ObjectId& material) {
+	int AddFile(const std::string& file, Scene& scene, AssetLibrary& assets, const glm::mat4& placement, const ObjectId& material) {
+		const std::string path = CanonicalPath(file);
 		const Importer* importer = FindImporter(path);
 		if (importer == nullptr) {
 			std::cerr << "Add: nessun importer per " << path << std::endl;

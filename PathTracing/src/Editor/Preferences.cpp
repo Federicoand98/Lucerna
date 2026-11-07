@@ -2,6 +2,7 @@
 
 #include "Core/Json.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 
@@ -31,5 +32,12 @@ namespace Lucerna {
 			return;
 		}
 		file << nlohmann::json(*this).dump(2);
+	}
+
+	void Preferences::AddRecent(const std::string& path) {
+		RecentFiles.erase(std::remove(RecentFiles.begin(), RecentFiles.end(), path), RecentFiles.end());
+		RecentFiles.insert(RecentFiles.begin(), path);
+		if (RecentFiles.size() > MAX_RECENT)
+			RecentFiles.resize(MAX_RECENT);
 	}
 }

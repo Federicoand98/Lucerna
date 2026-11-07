@@ -102,6 +102,9 @@ namespace Lucerna {
 
 		// I cambiamenti accumulati dall'ultima chiamata; li consuma il renderer
 		uint32_t TakeChanges() { const uint32_t c = m_Changes; m_Changes = NoChange; return c; }
+		// Cresce a ogni modifica, anche a quelle che non cambiano l'immagine (un nome): il documento
+		// la confronta con quella dell'ultimo salvataggio per sapere se ci sono modifiche (Editor/Document.h).
+		uint64_t Revision() const { return m_Revision; }
 
 	private:
 		friend class SceneSerializer; // legge e rimpiazza la libreria intera
@@ -109,6 +112,9 @@ namespace Lucerna {
 		ObjectList<Material> m_Materials{ "Material" };
 		ObjectList<Texture> m_Textures{ "Texture" };
 		ObjectList<MeshAsset> m_Meshes{ "Mesh" };
+		void Touch(uint32_t changes) { m_Changes |= changes; m_Revision++; }
+
+		uint64_t m_Revision = 0;
 		uint32_t m_Changes = AssetChanges;
 	};
 }

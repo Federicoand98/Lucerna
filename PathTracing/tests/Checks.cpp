@@ -6,6 +6,8 @@
 #include "Import/SceneFiles.h"
 #include "Import/Importer.h"
 #include "Serialization/BuiltinScenes.h"
+#include "Editor/Document.h"
+#include "Core/Paths.h"
 
 #include <cstdio>
 #include <unordered_set>
@@ -136,6 +138,51 @@ int main() {
 	CHECK(FindBuiltinScene(builtin, "sponza") == &builtin.back());
 	CHECK(FindBuiltinScene(builtin, "4") != nullptr && FindBuiltinScene(builtin, "4")->DisplayName == "Cornell Box Meshes");
 	CHECK(FindBuiltinScene(builtin, "1") == nullptr && FindBuiltinScene(builtin, "") == nullptr);  // le scene casuali non ci sono piu'
+
+	// Documento: le revisioni crescono a ogni modifica da salvare, anche un nome, non navigando
+	Scene doc;
+	AssetLibrary docAssets;
+	RenderSettings docSettings;
+	const uint64_t rev0 = doc.Revision();
+	doc.MoveCamera(glm::vec3(2.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+	CHECK(doc.Revision() == rev0);
+	const int docSphere = doc.AddSphere(Sphere{});
+	CHECK(doc.Revision() > rev0);
+	const uint64_t rev1 = doc.Revision();
+	doc.Rename(doc.Spheres()[docSphere].Id, "named");
+	CHECK(doc.Revision() > rev1);
+
+	// Path relativi al file di scena (formato 3), avanti e indietro
+	CHECK(CanonicalPath(std::filesystem::absolute("res/models/pawn.obj")) == "res/models/pawn.obj");
+	CHECK(RelativeToFile("res/models/pawn.obj", "build/scene.json") == "../res/models/pawn.obj");
+	CHECK(ResolveFromFile("../res/models/pawn.obj", "build/scene.json") == "res/models/pawn.obj");
+	CHECK(ResolveFromFile("/abs/model.obj", "build/scene.json") == "/abs/model.obj");
+
+	Document document;
+	document.New(doc, docAssets, docSettings);
+	CHECK(!document.IsModified(doc, docAssets, docSettings) && document.Origin() == DocumentOrigin::New && !document.CanSaveInPlace());
+	CHECK(document.DisplayName() == "Untitled");
+	CHECK(AddFile("res/models/pawn.obj", doc, docAssets, glm::mat4(1.0f), ObjectId{}) == 0);
+	CHECK(document.IsModified(doc, docAssets, docSettings));
+	CHECK(document.SaveAs("build/check_document.json", doc, docAssets, docSettings));
+	CHECK(!document.IsModified(doc, docAssets, docSettings) && document.CanSaveInPlace() && document.DisplayName() == "check_document.json");
+	docSettings.RayDepth += 1;                          // le impostazioni di render si salvano col file
+	CHECK(document.IsModified(doc, docAssets, docSettings));
+	CHECK(document.Save(doc, docAssets, docSettings) && !document.IsModified(doc, docAssets, docSettings));
+	// Riaprirlo ritrova il modello: il path salvato e' relativo a build/, quello riletto di nuovo a res/
+	Scene reopened;
+	AssetLibrary reopenedAssets;
+	RenderSettings reopenedSettings;
+	Document reopenedDoc;
+	CHECK(reopenedDoc.Open("build/check_document.json", reopened, reopenedAssets, reopenedSettings));
+	CHECK(reopenedDoc.Origin() == DocumentOrigin::SceneFile && !reopenedDoc.IsModified(reopened, reopenedAssets, reopenedSettings));
+	CHECK(reopenedAssets.Meshes().size() == 1 && reopenedAssets.Meshes()[0].Source.File == "res/models/pawn.obj");
+	CHECK(!reopenedAssets.Meshes()[0].Triangles.empty() && reopenedSettings.RayDepth == docSettings.RayDepth);
+	// Un file importato o una scena integrata non si riscrivono: Save diventa Save As
+	CHECK(reopenedDoc.Open("res/models/pawn.obj", reopened, reopenedAssets, reopenedSettings) && reopenedDoc.Origin() == DocumentOrigin::Imported);
+	CHECK(!reopenedDoc.CanSaveInPlace() && !reopenedDoc.Save(reopened, reopenedAssets, reopenedSettings));
+	CHECK(reopenedDoc.OpenBuiltin(builtin.front(), reopened, reopenedAssets, reopenedSettings) && !reopenedDoc.CanSaveInPlace());
+	std::filesystem::remove("build/check_document.json");
 
 	std::printf(failures ? "%d checks failed\n" : "all checks passed\n", failures);
 	return failures ? 1 : 0;

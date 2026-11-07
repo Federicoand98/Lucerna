@@ -1559,7 +1559,7 @@
         ],
         "name": "sponza.obj",
         "source": {
-          "file": "models/Sponza/sponza.obj",
+          "file": "../../models/Sponza/sponza.obj",
           "mesh": -1,
           "primitive": -1
         }
@@ -1570,259 +1570,259 @@
         "id": "479d5b18ef2711a2",
         "kind": "color",
         "name": "lion",
-        "path": "models/Sponza/textures/lion.tga"
+        "path": "../../models/Sponza/textures/lion.tga"
       },
       {
         "id": "c80fd340f600de33",
         "kind": "data",
         "name": "lion_ddn",
-        "path": "models/Sponza/textures/lion_ddn.tga"
+        "path": "../../models/Sponza/textures/lion_ddn.tga"
       },
       {
         "id": "9a09cb73579d9cc7",
         "kind": "color",
         "name": "background",
-        "path": "models/Sponza/textures/background.tga"
+        "path": "../../models/Sponza/textures/background.tga"
       },
       {
         "id": "46034f2eb54667c7",
         "kind": "data",
         "name": "background_ddn",
-        "path": "models/Sponza/textures/background_ddn.tga"
+        "path": "../../models/Sponza/textures/background_ddn.tga"
       },
       {
         "id": "2e41eff8fd3b71c4",
         "kind": "color",
         "name": "vase_plant",
-        "path": "models/Sponza/textures/vase_plant.tga"
+        "path": "../../models/Sponza/textures/vase_plant.tga"
       },
       {
         "id": "ebeae3ef09b661d0",
         "kind": "color",
         "name": "sponza_arch_diff",
-        "path": "models/Sponza/textures/sponza_arch_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_arch_diff.tga"
       },
       {
         "id": "d5bd0e771a35fd59",
         "kind": "data",
         "name": "sponza_arch_ddn",
-        "path": "models/Sponza/textures/sponza_arch_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_arch_ddn.tga"
       },
       {
         "id": "5a66dd09408e6a04",
         "kind": "color",
         "name": "spnza_bricks_a_diff",
-        "path": "models/Sponza/textures/spnza_bricks_a_diff.tga"
+        "path": "../../models/Sponza/textures/spnza_bricks_a_diff.tga"
       },
       {
         "id": "b6732a09ecaa286d",
         "kind": "data",
         "name": "spnza_bricks_a_ddn",
-        "path": "models/Sponza/textures/spnza_bricks_a_ddn.tga"
+        "path": "../../models/Sponza/textures/spnza_bricks_a_ddn.tga"
       },
       {
         "id": "beed2fe6485ff81d",
         "kind": "color",
         "name": "sponza_ceiling_a_diff",
-        "path": "models/Sponza/textures/sponza_ceiling_a_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_ceiling_a_diff.tga"
       },
       {
         "id": "2be3a256d9d8a052",
         "kind": "data",
         "name": "sponza_ceiling_a_ddn",
-        "path": "models/Sponza/textures/sponza_ceiling_a_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_ceiling_a_ddn.tga"
       },
       {
         "id": "2858e251bf47c965",
         "kind": "color",
         "name": "chain_texture",
-        "path": "models/Sponza/textures/chain_texture.tga"
+        "path": "../../models/Sponza/textures/chain_texture.tga"
       },
       {
         "id": "62b741017fb26d80",
         "kind": "data",
         "name": "chain_texture_ddn",
-        "path": "models/Sponza/textures/chain_texture_ddn.tga"
+        "path": "../../models/Sponza/textures/chain_texture_ddn.tga"
       },
       {
         "id": "6f207959a1901eb3",
         "kind": "color",
         "name": "sponza_column_a_diff",
-        "path": "models/Sponza/textures/sponza_column_a_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_column_a_diff.tga"
       },
       {
         "id": "a7119a3d9ef8391d",
         "kind": "data",
         "name": "sponza_column_a_ddn",
-        "path": "models/Sponza/textures/sponza_column_a_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_column_a_ddn.tga"
       },
       {
         "id": "d95281327d40d016",
         "kind": "color",
         "name": "sponza_column_b_diff",
-        "path": "models/Sponza/textures/sponza_column_b_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_column_b_diff.tga"
       },
       {
         "id": "b2dbd8a6292f4bdb",
         "kind": "data",
         "name": "sponza_column_b_ddn",
-        "path": "models/Sponza/textures/sponza_column_b_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_column_b_ddn.tga"
       },
       {
         "id": "918ea1eaae7388b0",
         "kind": "color",
         "name": "sponza_column_c_diff",
-        "path": "models/Sponza/textures/sponza_column_c_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_column_c_diff.tga"
       },
       {
         "id": "f0deb46cce18c462",
         "kind": "data",
         "name": "sponza_column_c_ddn",
-        "path": "models/Sponza/textures/sponza_column_c_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_column_c_ddn.tga"
       },
       {
         "id": "039939f088179ced",
         "kind": "color",
         "name": "sponza_details_diff",
-        "path": "models/Sponza/textures/sponza_details_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_details_diff.tga"
       },
       {
         "id": "e482dfc64bc046be",
         "kind": "data",
         "name": "sponza_details_ddn",
-        "path": "models/Sponza/textures/sponza_details_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_details_ddn.tga"
       },
       {
         "id": "4871eb9762a79199",
         "kind": "color",
         "name": "sponza_fabric_diff",
-        "path": "models/Sponza/textures/sponza_fabric_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_fabric_diff.tga"
       },
       {
         "id": "d1f00b7c006033cc",
         "kind": "data",
         "name": "sponza_fabric_ddn",
-        "path": "models/Sponza/textures/sponza_fabric_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_fabric_ddn.tga"
       },
       {
         "id": "e8fad094da390ed1",
         "kind": "color",
         "name": "sponza_curtain_diff",
-        "path": "models/Sponza/textures/sponza_curtain_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_curtain_diff.tga"
       },
       {
         "id": "d84032cd51db5e70",
         "kind": "data",
         "name": "sponza_curtain_ddn",
-        "path": "models/Sponza/textures/sponza_curtain_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_curtain_ddn.tga"
       },
       {
         "id": "298f5561028219c7",
         "kind": "color",
         "name": "sponza_fabric_blue_diff",
-        "path": "models/Sponza/textures/sponza_fabric_blue_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_fabric_blue_diff.tga"
       },
       {
         "id": "f5db70926ace4d6c",
         "kind": "color",
         "name": "sponza_fabric_green_diff",
-        "path": "models/Sponza/textures/sponza_fabric_green_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_fabric_green_diff.tga"
       },
       {
         "id": "c87438bef539f77e",
         "kind": "color",
         "name": "sponza_curtain_green_diff",
-        "path": "models/Sponza/textures/sponza_curtain_green_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_curtain_green_diff.tga"
       },
       {
         "id": "d39ee9ef2dba447f",
         "kind": "color",
         "name": "sponza_curtain_blue_diff",
-        "path": "models/Sponza/textures/sponza_curtain_blue_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_curtain_blue_diff.tga"
       },
       {
         "id": "2f3b1e5c47360c36",
         "kind": "color",
         "name": "sponza_flagpole_diff",
-        "path": "models/Sponza/textures/sponza_flagpole_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_flagpole_diff.tga"
       },
       {
         "id": "d26e301a3078a2b1",
         "kind": "data",
         "name": "sponza_flagpole_ddn",
-        "path": "models/Sponza/textures/sponza_flagpole_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_flagpole_ddn.tga"
       },
       {
         "id": "725242f19c5b4ab9",
         "kind": "color",
         "name": "sponza_floor_a_diff",
-        "path": "models/Sponza/textures/sponza_floor_a_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_floor_a_diff.tga"
       },
       {
         "id": "75bd743ec31d0c42",
         "kind": "data",
         "name": "sponza_floor_a_ddn",
-        "path": "models/Sponza/textures/sponza_floor_a_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_floor_a_ddn.tga"
       },
       {
         "id": "221d3546a8f9c4e7",
         "kind": "color",
         "name": "sponza_thorn_diff",
-        "path": "models/Sponza/textures/sponza_thorn_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_thorn_diff.tga"
       },
       {
         "id": "e6b603fbfc299300",
         "kind": "data",
         "name": "sponza_thorn_ddn",
-        "path": "models/Sponza/textures/sponza_thorn_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_thorn_ddn.tga"
       },
       {
         "id": "e25bed5be854ad65",
         "kind": "color",
         "name": "sponza_roof_diff",
-        "path": "models/Sponza/textures/sponza_roof_diff.tga"
+        "path": "../../models/Sponza/textures/sponza_roof_diff.tga"
       },
       {
         "id": "b1984ef1fafe1f16",
         "kind": "data",
         "name": "sponza_roof_ddn",
-        "path": "models/Sponza/textures/sponza_roof_ddn.tga"
+        "path": "../../models/Sponza/textures/sponza_roof_ddn.tga"
       },
       {
         "id": "cdfa0f16daebb345",
         "kind": "color",
         "name": "vase_dif",
-        "path": "models/Sponza/textures/vase_dif.tga"
+        "path": "../../models/Sponza/textures/vase_dif.tga"
       },
       {
         "id": "572939cc4307b6eb",
         "kind": "data",
         "name": "vase_ddn",
-        "path": "models/Sponza/textures/vase_ddn.tga"
+        "path": "../../models/Sponza/textures/vase_ddn.tga"
       },
       {
         "id": "559eb8014b03ebe4",
         "kind": "color",
         "name": "vase_hanging",
-        "path": "models/Sponza/textures/vase_hanging.tga"
+        "path": "../../models/Sponza/textures/vase_hanging.tga"
       },
       {
         "id": "97451e7bb98a1a74",
         "kind": "data",
         "name": "vase_hanging_ddn",
-        "path": "models/Sponza/textures/vase_hanging_ddn.tga"
+        "path": "../../models/Sponza/textures/vase_hanging_ddn.tga"
       },
       {
         "id": "80dec9b99854efca",
         "kind": "color",
         "name": "vase_round",
-        "path": "models/Sponza/textures/vase_round.tga"
+        "path": "../../models/Sponza/textures/vase_round.tga"
       },
       {
         "id": "20fdbcbce6ecff13",
         "kind": "data",
         "name": "vase_round_ddn",
-        "path": "models/Sponza/textures/vase_round_ddn.tga"
+        "path": "../../models/Sponza/textures/vase_round_ddn.tga"
       }
     ]
   },
@@ -1907,5 +1907,5 @@
     "enabled": true,
     "irradiance": 3.0
   },
-  "version": 2
+  "version": 3
 }

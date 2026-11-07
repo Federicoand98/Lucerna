@@ -45,6 +45,9 @@ namespace Lucerna {
 
 		// Preset: punti di partenza, non modalita'. Cambiare un campo dopo averne scelto uno
 		// e' normale.
+		// Il documento confronta le impostazioni con quelle salvate: stanno nel file di scena
+		bool operator==(const RenderSettings&) const = default;
+
 		static RenderSettings Draft() {
 			RenderSettings s;
 			s.RayDepth = 3;
