@@ -1,4 +1,5 @@
 #include "Render/Denoiser.h"
+#include "Core/Paths.h"
 
 namespace Lucerna {
 
@@ -14,7 +15,7 @@ namespace Lucerna {
 	}
 
 	Denoiser::Denoiser() {
-		m_Pipeline = std::make_unique<ComputePipeline>("shaders/spv/Denoiser.spv",
+		m_Pipeline = std::make_unique<ComputePipeline>(ShaderPath("Denoiser.spv"),
 			std::vector<VkDescriptorType>(5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE), static_cast<uint32_t>(sizeof(DenoiserParams)));
 	}
 

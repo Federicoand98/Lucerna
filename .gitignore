@@ -4,18 +4,15 @@ PathTracing/out/
 CMakeLists.txt.user
 compile_commands.json
 
-# ---- output e stato dell'utente che l'app scrive in res (finche' non escono da res)
-PathTracing/res/Lucerna
-PathTracing/res/Lucerna.exe
+# ---- file dell'utente che restano in res: le scene salvate (quelle in scenes/builtin sono del repo),
+# e lo stato di prima della riorganizzazione (ora sta in ~/.config/lucerna, ADR 0022)
+PathTracing/res/scenes/*.json
 PathTracing/res/imgui.ini
 PathTracing/res/preferences.json
-PathTracing/res/screenshots/
-# le scene salvate dall'utente; quelle integrate (scenes/builtin) restano nel repo
-PathTracing/res/scenes/*.json
 
 # ---- asset grandi, non nel repo
+# (tools/fetch_assets.sh lo scarica)
 PathTracing/res/models/Sponza/
-PathTracing/res/models/dragon.obj
 
 # ---- file generati
 __pycache__/

@@ -151,9 +151,13 @@ The build has been tested on Linux only.
    cmake -S PathTracing -B PathTracing/build
    cmake --build PathTracing/build
    ```
-3. Run. The executable is written to `PathTracing/res`
+3. Download the large models that aren't in the repository (Sponza, about 110 MB)
    ```sh
-   ./PathTracing/res/Lucerna
+   PathTracing/tools/fetch_assets.sh
+   ```
+4. Run. The executable is written to `PathTracing/build/bin` and finds its data on its own
+   ```sh
+   ./PathTracing/build/bin/Lucerna
    ```
 
 To enable the Vulkan validation layers in a Release build, set `PT_VALIDATION=1`.

@@ -169,6 +169,7 @@ namespace Lucerna {
 		// dell'oggetto selezionato quando la selezione cambia (m_MaterialFollowsSelection)
 		ObjectId m_EditedMaterial;
 		ObjectId m_MaterialFollowsSelection;
+		std::string m_IniPath;           // imgui.ini nella cartella dell'utente: ImGui ne tiene il puntatore
 		float m_UiScale = 1.0f;          // la scala delle misure della UI, in coordinate della finestra
 		float m_FramebufferScale = 1.0f; // pixel del framebuffer per unita' della finestra (Wayland HiDPI)
 		bool m_CustomTitleBar = false;   // finestra senza cornice: la barra e' quella dei menu

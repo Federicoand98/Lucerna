@@ -11,7 +11,7 @@
 namespace Lucerna {
 
 	// Preferenze dell'applicazione (ADR 0010): valgono per ogni scena e restano tra un avvio e
-	// l'altro, in preferences.json accanto a imgui.ini.
+	// l'altro, in preferences.json accanto a imgui.ini, nella cartella dell'utente (ADR 0022).
 	struct Preferences {
 		bool Vsync = true;
 		// La barra del titolo del sistema invece di quella disegnata dall'app (ADR 0021): vale
