@@ -4,6 +4,5 @@ source build.sh
 
 # Run the project
 echo "Running the project..."
-cd res
-./Lucerna
-cd -
+# l'eseguibile trova da se' res e gli shader, da qualunque cartella
+./build/bin/Lucerna

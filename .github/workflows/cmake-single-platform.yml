@@ -15,9 +15,14 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: true   # GLFW si compila dal submodule deps/glfw, con la patch di tools/glfw
 
     - name: Install dependencies
-      run: sudo apt-get update && sudo apt-get install -y libvulkan-dev glslc libglfw3-dev
+      run: >
+        sudo apt-get update && sudo apt-get install -y libvulkan-dev glslc
+        libwayland-dev wayland-protocols libxkbcommon-dev
+        libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 
     - name: Configure CMake
       run: cmake -S ${{github.workspace}}/PathTracing -B ${{github.workspace}}/PathTracing/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}

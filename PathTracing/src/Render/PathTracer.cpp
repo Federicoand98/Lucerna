@@ -1,4 +1,5 @@
 #include "Render/PathTracer.h"
+#include "Core/Paths.h"
 
 #include <cstring>
 
@@ -33,7 +34,7 @@ namespace Lucerna {
 		const PickData empty = { -2, -2, -1.0f };
 		memcpy(m_Pick.Mapped, &empty, sizeof(empty));
 
-		m_Pipeline = std::make_unique<ComputePipeline>("shaders/spv/PathTracing.spv", BINDINGS);
+		m_Pipeline = std::make_unique<ComputePipeline>(ShaderPath("PathTracing.spv"), BINDINGS);
 	}
 
 	PathTracer::~PathTracer() {

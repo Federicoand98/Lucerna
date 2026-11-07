@@ -1,24 +1,18 @@
 ﻿
 #include "Editor/Application.h"
+#include "Core/Paths.h"
 
-namespace {
-	std::filesystem::path GetExecutableDirectory(char* executablePathArg) {
-	#if defined(__linux__)
-		std::error_code errorCode;
-		const std::filesystem::path executablePath = std::filesystem::read_symlink("/proc/self/exe", errorCode);
-		if (!errorCode && !executablePath.empty())
-			return executablePath.parent_path();
-	#endif
-
-		if (executablePathArg != nullptr)
-			return std::filesystem::absolute(executablePathArg).parent_path();
-
-		return std::filesystem::current_path();
+int main() {
+	// I dati (fonts, textures, models, scenes) si leggono con path relativi a res, ovunque stia
+	// l'eseguibile (ADR 0022): ci si sposta li' prima di tutto
+	Lucerna::LaunchDirectory() = std::filesystem::current_path(); // i path delle variabili PT_* sono relativi a qui
+	const std::filesystem::path resources = Lucerna::ResourceDirectory();
+	std::error_code error;
+	std::filesystem::current_path(resources, error);
+	if (error) {
+		std::cerr << "Resource folder not found: " << resources << " (set LUCERNA_RESOURCES)" << std::endl;
+		return 1;
 	}
-}
-
-int main(int, char** argv) {
-	std::filesystem::current_path(GetExecutableDirectory(argv[0]));
 
 	Lucerna::Application application;
 

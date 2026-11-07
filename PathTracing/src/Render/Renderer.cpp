@@ -3,6 +3,7 @@
 //
 
 #include "Render/Renderer.h"
+#include "Core/Paths.h"
 
 #include "stb/stb_image_write.h"
 #include <algorithm>
@@ -97,7 +98,7 @@ namespace Lucerna {
 		m_PathTracer = std::make_unique<PathTracer>();
 		m_Denoiser = std::make_unique<Denoiser>();
 		m_Denoiser->Resize(m_Width, m_Height); // OnResize ha gia' fissato m_Width/m_Height
-		m_Tonemap = std::make_unique<ComputePipeline>("shaders/spv/Tonemap.spv",
+		m_Tonemap = std::make_unique<ComputePipeline>(ShaderPath("Tonemap.spv"),
 			std::vector<VkDescriptorType>{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE },
 			static_cast<uint32_t>(sizeof(TonemapParams)));
 
@@ -307,8 +308,10 @@ namespace Lucerna {
 	std::string Renderer::SaveScreenshot(const std::string& path) {
 		std::string fileName = path;
 		if (fileName.empty()) {
-			std::filesystem::create_directories("screenshots");
-			fileName = "screenshots/" + std::to_string(screenshotsCount++) + ".png";
+			// nella cartella Immagini dell'utente, non accanto ai dati (ADR 0022)
+			const std::filesystem::path folder = UserPicturesDirectory();
+			std::filesystem::create_directories(folder);
+			fileName = (folder / (std::to_string(screenshotsCount++) + ".png")).string();
 		} else {
 			std::filesystem::path p(fileName);
 			if (p.has_parent_path())

@@ -18,12 +18,16 @@ endif()
 
 
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
-set(LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs")
-set(RES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/res")
+set(RES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/res")               # i dati letti a runtime
+set(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")       # i sorgenti GLSL
+set(SPV_DIR "${CMAKE_BINARY_DIR}/shaders")                  # gli SPIR-V compilati: output del build
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${RES_DIR})
+# L'eseguibile e' output del build: sta in build/bin, non in res. Trova i suoi dati dai path
+# che CMake gli scrive dentro (LUCERNA_RESOURCES e LUCERNA_SHADERS li sovrascrivono a runtime).
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+add_compile_definitions(LUCERNA_RESOURCE_DIR="${RES_DIR}" LUCERNA_SHADER_DIR="${SPV_DIR}")
 
 find_package(Vulkan REQUIRED)
 # GLFW 3.5.1 dal submodule deps/glfw, con una patch che aggiunge glfwStartInteractiveMove e
@@ -60,7 +64,7 @@ add_compile_definitions(GLFW_INCLUDE_NONE)
 
 # Header visibili a tutti: glm, la radice di src (gli include si scrivono "Modulo/File.h") e i
 # vendor header-only. ImGui e ImGuizmo NO: arrivano solo a chi linka il loro target.
-include_directories("${LIB_DIR}/glm" "${SRC_DIR}" "${SRC_DIR}/vendor")
+include_directories("${SRC_DIR}/vendor/glm" "${SRC_DIR}" "${SRC_DIR}/vendor")
 
 # ---- vendor ----------------------------------------------------------------
 set(VENDOR "${SRC_DIR}/vendor")
@@ -132,8 +136,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE LucernaEditor)
 # Shader: SPIR-V generato a build time. glslc risolve da se' gli #include, quindi un compute
 # dipende da tutti i .glsl: modificarne uno ricompila solo gli shader.
 find_program(GLSLC glslc REQUIRED)
-set(SHADER_DIR "${RES_DIR}/shaders")
-set(SPV_DIR "${SHADER_DIR}/spv")
 file(MAKE_DIRECTORY ${SPV_DIR})
 file(GLOB_RECURSE SHADER_INCLUDES CONFIGURE_DEPENDS "${SHADER_DIR}/*.glsl")
 file(GLOB SHADER_SOURCES CONFIGURE_DEPENDS "${SHADER_DIR}/*.comp")

@@ -1,6 +1,7 @@
 #include "Editor/Preferences.h"
 
 #include "Core/Json.h"
+#include "Core/Paths.h"
 
 #include <algorithm>
 #include <fstream>
@@ -8,27 +9,31 @@
 
 namespace Lucerna {
 
-	// Relativo alla cartella dell'eseguibile, come imgui.ini (Main.cpp ci fa chdir).
-	static constexpr const char* PREFERENCES_PATH = "preferences.json";
+	// Nella cartella dell'utente, con imgui.ini (ADR 0022). Il file che stava in res prima della
+	// riorganizzazione si legge ancora una volta, se quello nuovo non c'e'.
+	static std::filesystem::path PreferencesPath() { return UserConfigDirectory() / "preferences.json"; }
+	static constexpr const char* OLD_PREFERENCES_PATH = "preferences.json";
 
 	Preferences Preferences::Load() {
 		Preferences prefs;
-		std::ifstream file(PREFERENCES_PATH);
+		std::ifstream file(std::filesystem::exists(PreferencesPath()) ? PreferencesPath() : std::filesystem::path(OLD_PREFERENCES_PATH));
 		if (!file)
 			return prefs;
 		try {
 			nlohmann::json::parse(file).get_to(prefs);
 		}
 		catch (const std::exception& e) {
-			std::cerr << "Preferences: " << PREFERENCES_PATH << " non valido (" << e.what() << "), uso i default" << std::endl;
+			std::cerr << "Preferences: " << PreferencesPath() << " non valido (" << e.what() << "), uso i default" << std::endl;
 		}
 		return prefs;
 	}
 
 	void Preferences::Save() const {
-		std::ofstream file(PREFERENCES_PATH);
+		std::error_code error;
+		std::filesystem::create_directories(UserConfigDirectory(), error);
+		std::ofstream file(PreferencesPath());
 		if (!file) {
-			std::cerr << "Preferences: impossibile scrivere " << PREFERENCES_PATH << std::endl;
+			std::cerr << "Preferences: impossibile scrivere " << PreferencesPath() << std::endl;
 			return;
 		}
 		file << nlohmann::json(*this).dump(2);

@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "imgui_internal.h"
 #include "Editor/Input.h"
+#include "Core/Paths.h"
 #include "Editor/Icons.h"
 #include "Editor/Theme.h"
 #include "Editor/Widgets.h"
@@ -90,9 +91,9 @@ namespace Lucerna {
 		// Test/CI headless: PT_GLTF=<file> o PT_SCENE_FILE=<file.json> aprono un file al posto
 		// della scena di default; il documento li apre entrambi, in qualunque formato
 		if (const char* g = getenv("PT_GLTF"))
-			OpenDocument(g);
+			OpenDocument(FromLaunchDirectory(g, true));
 		if (const char* f = getenv("PT_SCENE_FILE"))
-			OpenDocument(f);
+			OpenDocument(FromLaunchDirectory(f, true));
 
 		// Test/CI headless: PT_NEE=0 forza la NEE spenta (A/B col light sampling).
 		// PT_CAM=x,y,z,dx,dy,dz: posizione e direzione della camera, per catture ripetibili
@@ -168,6 +169,20 @@ namespace Lucerna {
 		ImGui::CreateContext();
 		ImGuiIO& io = ImGui::GetIO(); (void)io;
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+		// Il layout delle finestre e' stato dell'utente (ADR 0022): ~/.config/lucerna/imgui.ini.
+		// Quello che stava in res prima della riorganizzazione si copia la prima volta. Le
+		// esecuzioni da script non lo leggono e non lo scrivono: partono dal layout di default.
+		if (getenv("PT_SHOT")) {
+			io.IniFilename = nullptr;
+		}
+		else {
+			std::error_code error;
+			std::filesystem::create_directories(UserConfigDirectory(), error);
+			m_IniPath = (UserConfigDirectory() / "imgui.ini").string();
+			if (!std::filesystem::exists(m_IniPath) && std::filesystem::exists("imgui.ini"))
+				std::filesystem::copy_file("imgui.ini", m_IniPath, error);
+			io.IniFilename = m_IniPath.c_str();
+		}
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 		// Le finestre staccate di ImGui vanno posizionate, e Wayland non lo permette alle app
 		if (platform != GLFW_PLATFORM_WAYLAND)
@@ -335,11 +350,11 @@ namespace Lucerna {
 			static int shotFrame = getenv("PT_SHOT_FRAME") ? atoi(getenv("PT_SHOT_FRAME")) : 200;
 			static int n = 0;
 			if (++n >= shotFrame) {
-				m_Renderer.SaveScreenshot(shot);
+				m_Renderer.SaveScreenshot(FromLaunchDirectory(shot, false));
 				// PT_HDR=<file>: dump della beauty LINEARE (rgba32f, pre-tonemap) come raw
 				// float32. Serve a confronti non falsati da tonemap/clipping a 8 bit.
 				if (const char* hdr = getenv("PT_HDR"))
-					m_Renderer.SaveHdr(hdr);
+					m_Renderer.SaveHdr(FromLaunchDirectory(hdr, false));
 				m_IsRunning = false;
 			}
 		}

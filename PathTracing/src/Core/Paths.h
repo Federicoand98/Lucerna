@@ -3,10 +3,97 @@
 #ifndef CORE_PATHS_H
 #define CORE_PATHS_H
 
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace Lucerna {
+
+	// ---- dove stanno le cose (ADR 0022)
+
+	// I dati letti a runtime (fonts, textures, models, scenes): la cartella res del sorgente, il
+	// cui path lo scrive CMake. LUCERNA_RESOURCES lo sovrascrive. L'app ci fa chdir all'avvio,
+	// quindi i path dei dati restano relativi a lei.
+	inline std::filesystem::path ResourceDirectory() {
+		if (const char* dir = std::getenv("LUCERNA_RESOURCES"))
+			return dir;
+#ifdef LUCERNA_RESOURCE_DIR
+		return LUCERNA_RESOURCE_DIR;
+#else
+		return std::filesystem::current_path();
+#endif
+	}
+
+	// Uno shader compilato (SPIR-V): output del build, in build/shaders. LUCERNA_SHADERS lo sovrascrive.
+	inline std::string ShaderPath(const std::string& name) {
+		std::filesystem::path dir = "shaders";
+#ifdef LUCERNA_SHADER_DIR
+		dir = LUCERNA_SHADER_DIR;
+#endif
+		if (const char* override = std::getenv("LUCERNA_SHADERS"))
+			dir = override;
+		return (dir / name).string();
+	}
+
+	// La cartella da cui l'app e' stata lanciata: Main la ricorda prima di spostarsi nei dati
+	inline std::filesystem::path& LaunchDirectory() {
+		static std::filesystem::path directory;
+		return directory;
+	}
+
+	// Un path passato da riga di comando (le variabili PT_*): relativo alla cartella di lancio,
+	// come ci si aspetta da una shell. Un file da leggere che li' non c'e' resta relativo ai dati,
+	// come prima della riorganizzazione (PT_GLTF=models/...).
+	inline std::string FromLaunchDirectory(const std::string& path, bool input) {
+		const std::filesystem::path p(path);
+		if (p.is_absolute() || LaunchDirectory().empty())
+			return path;
+		const std::filesystem::path launched = LaunchDirectory() / p;
+		if (input && !std::filesystem::exists(launched))
+			return path;
+		return launched.string();
+	}
+
+	inline std::filesystem::path HomeDirectory() {
+		if (const char* home = std::getenv("HOME"))
+			return home;
+		if (const char* profile = std::getenv("USERPROFILE"))
+			return profile;
+		return std::filesystem::current_path();
+	}
+
+	// Lo stato dell'utente (layout delle finestre, preferenze): ~/.config/lucerna, o
+	// %APPDATA%\Lucerna su Windows. Non sta ne' nel repo ne' accanto ai dati.
+	inline std::filesystem::path UserConfigDirectory() {
+#ifdef _WIN32
+		if (const char* appData = std::getenv("APPDATA"))
+			return std::filesystem::path(appData) / "Lucerna";
+#endif
+		if (const char* config = std::getenv("XDG_CONFIG_HOME"); config && *config)
+			return std::filesystem::path(config) / "lucerna";
+		return HomeDirectory() / ".config" / "lucerna";
+	}
+
+	// Gli screenshot: la cartella Immagini dell'utente, piu' Lucerna. Su Linux il suo nome
+	// dipende dalla lingua ("Immagini"): lo dice ~/.config/user-dirs.dirs.
+	inline std::filesystem::path UserPicturesDirectory() {
+		std::filesystem::path pictures = HomeDirectory() / "Pictures";
+#ifndef _WIN32
+		const char* config = std::getenv("XDG_CONFIG_HOME");
+		std::ifstream dirs((config && *config ? std::filesystem::path(config) : HomeDirectory() / ".config") / "user-dirs.dirs");
+		for (std::string line; std::getline(dirs, line);) {
+			const std::string key = "XDG_PICTURES_DIR=\"";
+			if (line.rfind(key, 0) != 0 || line.back() != '"')
+				continue;
+			std::string value = line.substr(key.size(), line.size() - key.size() - 1);
+			if (value.rfind("$HOME", 0) == 0)
+				value = HomeDirectory().string() + value.substr(5);
+			pictures = value;
+		}
+#endif
+		return pictures / "Lucerna";
+	}
 
 	// Un path di file nella forma con cui l'app lo ricorda: relativo alla cartella di lavoro (res/)
 	// se ci sta dentro, altrimenti assoluto; sempre normalizzato e con "/". Cosi' lo stesso file
