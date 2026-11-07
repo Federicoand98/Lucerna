@@ -24,6 +24,34 @@ namespace Lucerna {
 	static Application* s_Instance = nullptr;
 
 	namespace {
+		// Su Wayland il cursore lo disegna l'app, e GLFW sceglie il tema solo da XCURSOR_THEME e
+		// XCURSOR_SIZE. GNOME non le imposta (tiene il tema nelle sue impostazioni): senza, si
+		// vedrebbe il tema di default invece di quello scelto dall'utente. Le si ricava da
+		// gsettings prima di glfwInit; dove il desktop le imposta gia' (KDE) non si tocca niente.
+		void UseDesktopCursorTheme() {
+#ifdef __linux__
+			auto gsetting = [](const char* key) {
+				const std::string command = std::string("gsettings get org.gnome.desktop.interface ") + key + " 2>/dev/null";
+				std::string value;
+				if (FILE* pipe = popen(command.c_str(), "r")) {
+					char buffer[256];
+					while (fgets(buffer, sizeof(buffer), pipe))
+						value += buffer;
+					pclose(pipe);
+				}
+				// "'Bibata-Modern-Ice'\n" -> "Bibata-Modern-Ice"; un numero resta com'e'
+				value.erase(std::remove_if(value.begin(), value.end(), [](char c) { return c == '\'' || c == '\n'; }), value.end());
+				return value;
+			};
+			if (getenv("XCURSOR_THEME") == nullptr)
+				if (const std::string theme = gsetting("cursor-theme"); !theme.empty())
+					setenv("XCURSOR_THEME", theme.c_str(), 0);
+			if (getenv("XCURSOR_SIZE") == nullptr)
+				if (const std::string size = gsetting("cursor-size"); !size.empty() && std::isdigit(static_cast<unsigned char>(size[0])))
+					setenv("XCURSOR_SIZE", size.c_str(), 0);
+#endif
+		}
+
 		// Proietta un punto world sullo schermo. Ritorna false se sta dietro la camera:
 		// dividere per una w negativa produrrebbe un punto ribaltato davanti all'occhio.
 		bool WorldToScreen(const glm::mat4& viewProjection, const glm::vec3& point,
@@ -106,10 +134,24 @@ namespace Lucerna {
 		m_Width = width;
 		m_Height = height;
 
+		// PT_PLATFORM=x11|wayland sceglie la piattaforma di GLFW; senza, Wayland se c'e'. La
+		// cattura dell'intera UI da script usa x11 (vedi CLAUDE.md).
+		if (const char* platform = getenv("PT_PLATFORM")) {
+			const std::string name = platform;
+			glfwInitHint(GLFW_PLATFORM, name == "x11" ? GLFW_PLATFORM_X11 : name == "wayland" ? GLFW_PLATFORM_WAYLAND : GLFW_ANY_PLATFORM);
+		}
+		UseDesktopCursorTheme();
 		if (!glfwInit())
 			return false;
 
+		// La barra del titolo e' quella dei menu (ADR 0021), dove GLFW sa chiedere al sistema di
+		// spostare e ridimensionare la finestra; altrove, o se l'utente la preferisce, resta la
+		// cornice del sistema
+		const int platform = glfwGetPlatform();
+		const bool canMoveItself = platform == GLFW_PLATFORM_WAYLAND || platform == GLFW_PLATFORM_X11 || platform == GLFW_PLATFORM_WIN32;
+		m_CustomTitleBar = canMoveItself && !m_Preferences.SystemTitleBar;
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+		glfwWindowHint(GLFW_DECORATED, m_CustomTitleBar ? GLFW_FALSE : GLFW_TRUE);
 		m_Window = glfwCreateWindow(width, height, "Lucerna", nullptr, nullptr);
 
 		if (m_Window == nullptr)
@@ -127,15 +169,13 @@ namespace Lucerna {
 		ImGuiIO& io = ImGui::GetIO(); (void)io;
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;       // Enable Multi-Viewport / Platform Windows
+		// Le finestre staccate di ImGui vanno posizionate, e Wayland non lo permette alle app
+		if (platform != GLFW_PLATFORM_WAYLAND)
+			io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
 		// L'aspetto del redesign (concept A): font, palette e spaziature alla scala del monitor
-		float scaleX = 1.0f, scaleY = 1.0f;
-		glfwGetWindowContentScale(m_Window, &scaleX, &scaleY);
-		m_UiScale = std::max(1.0f, scaleX);
-		const Theme::Fonts fonts = Theme::LoadFonts(m_UiScale);
-		Theme::Apply(m_UiScale);
-		UI::Configure(fonts, m_UiScale);
+		ApplyUiScale();
+		glfwSetWindowContentScaleCallback(m_Window, &Application::OnContentScale);
 
 		ImGui_ImplGlfw_InitForVulkan(m_Window, true);
 
@@ -162,6 +202,7 @@ namespace Lucerna {
 		initInfo.UseDynamicRendering = true;
 		initInfo.ColorAttachmentFormat = swapchainFormat;
 		ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE);
+		m_ImGuiVulkanInfo = initInfo;
 
 		m_Vulkan.Immediate([](VkCommandBuffer cmd) { ImGui_ImplVulkan_CreateFontsTexture(cmd); });
 		ImGui_ImplVulkan_DestroyFontUploadObjects();
@@ -200,6 +241,9 @@ namespace Lucerna {
 			// Live-link glTF: ricarica la scena se il file e' stato ri-esportato da Blender.
 			PollLiveLink();
 
+			if (m_RescaleRequested)
+				RebuildUiForScale();
+
 			// Start the Dear ImGui frame
 			ImGui_ImplVulkan_NewFrame();
 			ImGui_ImplGlfw_NewFrame();
@@ -207,6 +251,7 @@ namespace Lucerna {
 			ImGui::NewFrame();
 			ImGuizmo::BeginFrame();
 
+			HandleWindowEdges();
 			// Prima del dockspace: la barra di menu riduce l'area di lavoro che il dockspace occupa
 			DrawMainMenu();
 			DrawStatusBar();
@@ -482,10 +527,7 @@ namespace Lucerna {
 		DrawViewMenu();
 		DrawHelpMenu();
 
-		// il file aperto, a destra
-		const std::string name = m_Document.DisplayName() + (m_Document.IsModified(m_Scene, m_Assets, m_Renderer.Settings) ? "*" : "");
-		ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(name.c_str()).x - ImGui::GetStyle().ItemSpacing.x * 2);
-		ImGui::TextDisabled("%s", name.c_str());
+		DrawWindowControls();
 		ImGui::EndMainMenuBar();
 	}
 
@@ -1588,7 +1630,7 @@ namespace Lucerna {
 		// In modalita' fuoco pero' si clicca per mettere a fuoco, anche sopra il gizmo.
 		const bool gizmoBusy = m_Selection.IsValid() && (ImGuizmo::IsOver() || ImGuizmo::IsUsing());
 
-		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_ViewportHovered && (!gizmoBusy || m_FocusPickArmed)) {
+		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_ViewportHovered && m_WindowEdges == 0 && (!gizmoBusy || m_FocusPickArmed)) {
 			ImVec2 mouse = ImGui::GetMousePos();
 
 			// coordinate locali al rettangolo dell'immagine, non alla finestra OS
@@ -1596,10 +1638,11 @@ namespace Lucerna {
 			float localY = mouse.y - m_ViewportPos.y;
 
 			if (localX >= 0.0f && localY >= 0.0f && localX < m_ViewportSize.x && localY < m_ViewportSize.y) {
-				int px = static_cast<int>(localX);
+				// la render e' in pixel del framebuffer, il mouse in coordinate della finestra
+				int px = static_cast<int>(localX * m_FramebufferScale);
 				// AddImage campiona con V ribaltata (0,1)->(1,0): la riga 0 dell'immagine
 				// del compute sta in BASSO, mentre il mouse ha origine in alto
-				int py = static_cast<int>(m_ViewportSize.y - 1.0f - localY);
+				int py = static_cast<int>((m_ViewportSize.y - localY) * m_FramebufferScale) - 1;
 
 				// il pick e' in volo per un frame: ricorda ORA se e' per il fuoco, prima
 				// che il bottone/modalita' cambino
@@ -1674,8 +1717,15 @@ namespace Lucerna {
 		if (const char* vp = getenv("PT_VIEWPORT"))
 			sscanf(vp, "%ux%u", &m_ViewportWidth, &m_ViewportHeight);
 
-		m_Camera.OnResize(m_ViewportWidth, m_ViewportHeight);
-		m_Renderer.OnResize(m_ViewportWidth, m_ViewportHeight);
+		// La viewport e' in coordinate della finestra; la render la riempie in pixel veri (Wayland
+		// HiDPI: il framebuffer e' piu' grande della finestra). PT_VIEWPORT e' gia' in pixel.
+		uint32_t width = m_ViewportWidth, height = m_ViewportHeight;
+		if (!getenv("PT_VIEWPORT")) {
+			width = static_cast<uint32_t>(m_ViewportWidth * m_FramebufferScale);
+			height = static_cast<uint32_t>(m_ViewportHeight * m_FramebufferScale);
+		}
+		m_Camera.OnResize(width, height);
+		m_Renderer.OnResize(width, height);
 		m_Renderer.Render(m_Camera.GetRenderView(), m_Scene, m_Assets);
 	}
 

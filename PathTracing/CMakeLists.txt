@@ -26,7 +26,35 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${RES_DIR})
 
 find_package(Vulkan REQUIRED)
-find_package(glfw3 REQUIRED)
+# GLFW 3.5.1 dal submodule deps/glfw, con una patch che aggiunge glfwStartInteractiveMove e
+# glfwStartInteractiveResize (la barra del titolo disegnata dall'app, ADR 0021). Il submodule
+# resta quello ufficiale: si copia nella cartella di build e la patch si applica alla copia,
+# di nuovo solo quando la patch cambia. Backend Wayland e X11: l'app gira su Wayland nativo.
+set(GLFW_PATCH ${CMAKE_CURRENT_SOURCE_DIR}/tools/glfw/interactive-move-resize.patch)
+set(GLFW_PATCHED ${CMAKE_BINARY_DIR}/glfw-patched)
+file(SHA256 ${GLFW_PATCH} GLFW_PATCH_HASH)
+if(NOT EXISTS ${GLFW_PATCHED}/.patched-${GLFW_PATCH_HASH})
+  if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/glfw/CMakeLists.txt)
+    message(FATAL_ERROR "deps/glfw is empty: run git submodule update --init")
+  endif()
+  file(REMOVE_RECURSE ${GLFW_PATCHED})
+  file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/deps/glfw/ DESTINATION ${GLFW_PATCHED} PATTERN ".git" EXCLUDE)
+  find_package(Git REQUIRED)
+  # La copia sta dentro il repo di Lucerna: senza il limite git applicherebbe la patch rispetto
+  # alla radice del repo, ignorando in silenzio i file della copia
+  execute_process(COMMAND ${CMAKE_COMMAND} -E env GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}
+                  ${GIT_EXECUTABLE} apply ${GLFW_PATCH} WORKING_DIRECTORY ${GLFW_PATCHED} RESULT_VARIABLE GLFW_PATCH_RESULT)
+  file(STRINGS ${GLFW_PATCHED}/include/GLFW/glfw3.h GLFW_PATCHED_API REGEX "glfwStartInteractiveResize")
+  if(NOT GLFW_PATCH_RESULT EQUAL 0 OR NOT GLFW_PATCHED_API)
+    message(FATAL_ERROR "The GLFW patch does not apply to deps/glfw (expected tag 3.5.1)")
+  endif()
+  file(TOUCH ${GLFW_PATCHED}/.patched-${GLFW_PATCH_HASH})
+endif()
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(${GLFW_PATCHED} ${CMAKE_BINARY_DIR}/glfw-build EXCLUDE_FROM_ALL)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_compile_definitions(GLFW_INCLUDE_NONE)
 

@@ -50,5 +50,8 @@
 #define ICON_CHECK          "\xee\x81\xb0" // check
 #define ICON_TEXTURE        "\xee\x84\x84" // layers
 #define ICON_MONITOR        "\xee\x84\xa1" // monitor
+#define ICON_MINIMIZE       "\xee\x84\xa0" // minus
+#define ICON_MAXIMIZE       "\xee\x85\xab" // square
+#define ICON_RESTORE        "\xee\x82\xa2" // copy
 
 #endif // EDITOR_ICONS_H

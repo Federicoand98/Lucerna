@@ -138,6 +138,12 @@ namespace Lucerna {
 		void DrawMainMenu();
 		void HandleShortcuts();
 		void UpdateWindowTitle();
+		// ---- finestra (ADR 0021): la barra del titolo disegnata dall'app e la scala HiDPI
+		void ApplyUiScale();        // font, stile e scala del framebuffer alla scala del monitor attuale
+		void RebuildUiForScale();   // dopo un cambio di monitor con un'altra scala
+		void DrawWindowControls();  // riduci, ingrandisci, chiudi, nella barra dei menu
+		void HandleWindowEdges();   // i bordi che ridimensionano una finestra senza cornice
+		static void OnContentScale(GLFWwindow* window, float x, float y);
 		void RememberRecent(const std::string& path);
 		void PollLiveLink();
 		static std::vector<std::string> FileFilters(); // per il file dialog, dal registry degli importer
@@ -163,7 +169,12 @@ namespace Lucerna {
 		// dell'oggetto selezionato quando la selezione cambia (m_MaterialFollowsSelection)
 		ObjectId m_EditedMaterial;
 		ObjectId m_MaterialFollowsSelection;
-		float m_UiScale = 1.0f; // la scala del monitor (HiDPI), per font e spaziature
+		float m_UiScale = 1.0f;          // la scala delle misure della UI, in coordinate della finestra
+		float m_FramebufferScale = 1.0f; // pixel del framebuffer per unita' della finestra (Wayland HiDPI)
+		bool m_CustomTitleBar = false;   // finestra senza cornice: la barra e' quella dei menu
+		bool m_RescaleRequested = false;
+		int m_WindowEdges = 0;           // i bordi sotto il mouse (GLFW_WINDOW_EDGE_*), 0 = nessuno
+		ImGui_ImplVulkan_InitInfo m_ImGuiVulkanInfo{};
 
 		// La richiesta e' separata dallo stato "aperta" perche' OpenPopup usa l'ID stack
 		// della finestra corrente: chiamandola dal bottone dentro "Settings" produrrebbe un

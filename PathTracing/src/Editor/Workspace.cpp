@@ -8,6 +8,7 @@
 #include "Editor/Widgets.h"
 
 #include "imgui_internal.h"
+#include "imgui_impl_vulkan.h"
 
 namespace Lucerna {
 
@@ -177,6 +178,13 @@ namespace Lucerna {
 				m_Vulkan.SetVsync(m_Vsync);
 				m_Preferences.Vsync = m_Vsync;
 				m_Preferences.Save();
+			}
+			// la cornice si sceglie quando si crea la finestra: vale al prossimo avvio (ADR 0021)
+			if (UI::Checkbox("System title bar", &m_Preferences.SystemTitleBar))
+				m_Preferences.Save();
+			if (m_Preferences.SystemTitleBar == m_CustomTitleBar) {
+				UI::Label("");
+				ImGui::TextDisabled("applies on the next start");
 			}
 			UI::Label("Device");
 			ImGui::TextDisabled("%s", m_Vulkan.DeviceName());
@@ -730,6 +738,144 @@ namespace Lucerna {
 			ImGui::Text("path tracer %.2f ms", m_Renderer.GetPathTraceMs());
 			ImGui::Text("denoiser    %.2f ms", m_Renderer.GetDenoiseMs());
 			ImGui::PopFont();
+		}
+	}
+
+	// ---------------------------------------------------------------- finestra (ADR 0021)
+
+	// Due scale diverse. Su X11 e Windows la finestra e' in pixel: la UI si ingrandisce col
+	// monitor. Su Wayland la finestra e' in unita' logiche e il framebuffer e' gia' scalato: le
+	// misure restano quelle, e solo i font si rasterizzano a risoluzione piena per restare nitidi.
+	void Application::ApplyUiScale() {
+		float contentX = 1.0f, contentY = 1.0f;
+		glfwGetWindowContentScale(m_Window, &contentX, &contentY);
+		int windowW = 0, windowH = 0, framebufferW = 0, framebufferH = 0;
+		glfwGetWindowSize(m_Window, &windowW, &windowH);
+		glfwGetFramebufferSize(m_Window, &framebufferW, &framebufferH);
+		m_FramebufferScale = windowW > 0 && framebufferW > 0 ? static_cast<float>(framebufferW) / windowW : 1.0f;
+		const float content = std::max(1.0f, contentX);
+		m_UiScale = std::max(1.0f, content / m_FramebufferScale);
+		const int platform = glfwGetPlatform();
+		std::cout << "Window: " << (platform == GLFW_PLATFORM_WAYLAND ? "wayland" : platform == GLFW_PLATFORM_X11 ? "x11" : "other")
+		          << (m_CustomTitleBar ? ", app title bar" : ", system title bar")
+		          << ", content scale " << content << ", framebuffer scale " << m_FramebufferScale
+		          << ", cursor theme " << (getenv("XCURSOR_THEME") ? getenv("XCURSOR_THEME") : "default")
+		          << " " << (getenv("XCURSOR_SIZE") ? getenv("XCURSOR_SIZE") : "") << std::endl;
+
+		ImGuiIO& io = ImGui::GetIO();
+		io.Fonts->Clear();
+		const Theme::Fonts fonts = Theme::LoadFonts(content);
+		io.FontGlobalScale = 1.0f / m_FramebufferScale;
+		Theme::Apply(m_UiScale);
+		UI::Configure(fonts, m_UiScale);
+	}
+
+	void Application::OnContentScale(GLFWwindow*, float, float) {
+		Get().m_RescaleRequested = true;
+	}
+
+	// La texture dei font va rifatta, e il backend Vulkan di ImGui non sa sostituirla: lo si
+	// rifa' da capo. Succede solo quando la finestra passa a un monitor con un'altra scala.
+	void Application::RebuildUiForScale() {
+		m_RescaleRequested = false;
+		vkDeviceWaitIdle(m_Vulkan.Device());
+		ApplyUiScale();
+		ImGui_ImplVulkan_Shutdown();
+		ImGui_ImplVulkan_Init(&m_ImGuiVulkanInfo, VK_NULL_HANDLE);
+		m_Vulkan.Immediate([](VkCommandBuffer cmd) { ImGui_ImplVulkan_CreateFontsTexture(cmd); });
+		ImGui_ImplVulkan_DestroyFontUploadObjects();
+		m_DisplaySet = VK_NULL_HANDLE; // il descrittore della render apparteneva al backend di prima
+	}
+
+	// A destra nella barra dei menu: il file aperto e, senza cornice, i tre pulsanti della finestra.
+	// Lo spazio vuoto della barra la trascina, e il doppio clic la ingrandisce.
+	void Application::DrawWindowControls() {
+		const float s = UI::Scale();
+		const std::string name = m_Document.DisplayName() + (m_Document.IsModified(m_Scene, m_Assets, m_Renderer.Settings) ? "*" : "");
+		const float button = ImGui::GetFrameHeight() * 1.4f;
+		const float controls = m_CustomTitleBar ? button * 3.0f + ImGui::GetStyle().WindowPadding.x : 0.0f;
+		ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(name.c_str()).x - controls - 16.0f * s);
+		ImGui::TextDisabled("%s", name.c_str());
+		if (!m_CustomTitleBar)
+			return;
+
+		// lo spazio vuoto della barra e' la barra del titolo
+		if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && m_WindowEdges == 0) {
+			if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+				if (glfwGetWindowAttrib(m_Window, GLFW_MAXIMIZED)) glfwRestoreWindow(m_Window);
+				else glfwMaximizeWindow(m_Window);
+			}
+			else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+				glfwStartInteractiveMove(m_Window);
+				// il rilascio va al sistema, che sta spostando la finestra: ImGui non lo vedrebbe e
+				// terrebbe il tasto premuto, perdendo il clic dopo (e il doppio clic)
+				ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+			}
+		}
+
+		ImGui::SameLine(ImGui::GetWindowWidth() - controls);
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+		const ImVec2 size(button, ImGui::GetFrameHeight());
+		const bool maximized = glfwGetWindowAttrib(m_Window, GLFW_MAXIMIZED);
+		if (ImGui::Button(ICON_MINIMIZE "##minimize", size))
+			glfwIconifyWindow(m_Window);
+		ImGui::SameLine();
+		if (ImGui::Button(maximized ? ICON_RESTORE "##maximize" : ICON_MAXIMIZE "##maximize", size)) {
+			if (maximized) glfwRestoreWindow(m_Window);
+			else glfwMaximizeWindow(m_Window);
+		}
+		ImGui::SameLine();
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Theme::Rgb(0xc42b1c));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, Theme::Rgb(0xa8251a));
+		if (ImGui::Button(ICON_CLOSE "##close", size))
+			WhenSaved([this] { m_IsRunning = false; });
+		ImGui::PopStyleColor(3);
+		ImGui::PopStyleVar(2);
+	}
+
+	// Senza cornice i bordi della finestra sono nostri: una fascia di pochi pixel chiede al
+	// sistema di ridimensionarla. Va prima dei pannelli: il click sul bordo non e' per loro.
+	void Application::HandleWindowEdges() {
+		m_WindowEdges = 0;
+		if (!m_CustomTitleBar || glfwGetWindowAttrib(m_Window, GLFW_MAXIMIZED))
+			return;
+		const ImGuiViewport* viewport = ImGui::GetMainViewport();
+		const ImVec2 mouse = ImGui::GetMousePos();
+		const float border = 5.0f * UI::Scale(), corner = 14.0f * UI::Scale();
+		const float left = mouse.x - viewport->Pos.x, top = mouse.y - viewport->Pos.y;
+		const float right = viewport->Pos.x + viewport->Size.x - mouse.x, bottom = viewport->Pos.y + viewport->Size.y - mouse.y;
+		if (left < 0 || top < 0 || right < 0 || bottom < 0)
+			return; // fuori dalla finestra
+
+		if (top < border) m_WindowEdges |= GLFW_WINDOW_EDGE_TOP;
+		if (bottom < border) m_WindowEdges |= GLFW_WINDOW_EDGE_BOTTOM;
+		if (left < border) m_WindowEdges |= GLFW_WINDOW_EDGE_LEFT;
+		if (right < border) m_WindowEdges |= GLFW_WINDOW_EDGE_RIGHT;
+		// vicino a un angolo, l'angolo: piu' facile da prendere della fascia sottile
+		if (m_WindowEdges != 0) {
+			if (top < corner) m_WindowEdges |= GLFW_WINDOW_EDGE_TOP;
+			if (bottom < corner) m_WindowEdges |= GLFW_WINDOW_EDGE_BOTTOM;
+			if (left < corner) m_WindowEdges |= GLFW_WINDOW_EDGE_LEFT;
+			if (right < corner) m_WindowEdges |= GLFW_WINDOW_EDGE_RIGHT;
+			if ((m_WindowEdges & (GLFW_WINDOW_EDGE_TOP | GLFW_WINDOW_EDGE_BOTTOM)) == (GLFW_WINDOW_EDGE_TOP | GLFW_WINDOW_EDGE_BOTTOM))
+				m_WindowEdges &= ~(top < bottom ? GLFW_WINDOW_EDGE_BOTTOM : GLFW_WINDOW_EDGE_TOP);
+			if ((m_WindowEdges & (GLFW_WINDOW_EDGE_LEFT | GLFW_WINDOW_EDGE_RIGHT)) == (GLFW_WINDOW_EDGE_LEFT | GLFW_WINDOW_EDGE_RIGHT))
+				m_WindowEdges &= ~(left < right ? GLFW_WINDOW_EDGE_RIGHT : GLFW_WINDOW_EDGE_LEFT);
+		}
+		if (m_WindowEdges == 0)
+			return;
+
+		const bool vertical = m_WindowEdges & (GLFW_WINDOW_EDGE_TOP | GLFW_WINDOW_EDGE_BOTTOM);
+		const bool horizontal = m_WindowEdges & (GLFW_WINDOW_EDGE_LEFT | GLFW_WINDOW_EDGE_RIGHT);
+		const bool mainDiagonal = m_WindowEdges == (GLFW_WINDOW_EDGE_TOP | GLFW_WINDOW_EDGE_LEFT)
+			|| m_WindowEdges == (GLFW_WINDOW_EDGE_BOTTOM | GLFW_WINDOW_EDGE_RIGHT);
+		ImGui::SetMouseCursor(vertical && horizontal ? (mainDiagonal ? ImGuiMouseCursor_ResizeNWSE : ImGuiMouseCursor_ResizeNESW)
+			: vertical ? ImGuiMouseCursor_ResizeNS : ImGuiMouseCursor_ResizeEW);
+		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+			glfwStartInteractiveResize(m_Window, m_WindowEdges);
+			ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, false); // come per lo spostamento
 		}
 	}
 }

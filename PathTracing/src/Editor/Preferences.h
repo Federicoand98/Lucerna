@@ -14,6 +14,9 @@ namespace Lucerna {
 	// l'altro, in preferences.json accanto a imgui.ini.
 	struct Preferences {
 		bool Vsync = true;
+		// La barra del titolo del sistema invece di quella disegnata dall'app (ADR 0021): vale
+		// al prossimo avvio, perche' la cornice si sceglie quando si crea la finestra
+		bool SystemTitleBar = false;
 		// I file aperti o salvati di recente, il piu' recente per primo (Open Recent)
 		std::vector<std::string> RecentFiles;
 		void AddRecent(const std::string& path); // in testa, senza doppioni, al massimo MAX_RECENT
@@ -25,7 +28,7 @@ namespace Lucerna {
 	};
 
 	constexpr auto JsonFields(const Preferences*) {
-		return std::make_tuple(Field("vsync", &Preferences::Vsync), Field("recentFiles", &Preferences::RecentFiles));
+		return std::make_tuple(Field("vsync", &Preferences::Vsync), Field("systemTitleBar", &Preferences::SystemTitleBar), Field("recentFiles", &Preferences::RecentFiles));
 	}
 }
 
