@@ -238,6 +238,20 @@ namespace Lucerna {
 	// sono deliberatamente ignorati (non hanno un equivalente, per ora). map_Bump, bump e
 	// map_Disp si leggono tutti come normal map in spazio tangente: e' l'uso che ne fanno gli
 	// asset reali (Sponza mette i suoi _ddn su map_Disp), le height map vere non le gestiamo.
+	// Il campo di MtlMaterial in cui va una mappa, nullptr per le mappe che non leggiamo
+	// (map_Ka, map_Ks...: issue #15 le lascia fuori, le _spec di Bistro non hanno un significato
+	// PBR certo). map_Bump, bump, map_Disp e disp vanno tutte nella normal map.
+	static std::string* MapTarget(MtlMaterial& m, const std::string& prefix) {
+		if (prefix == "map_Kd") return &m.map_Kd;
+		if (prefix == "map_d") return &m.map_d;
+		if (prefix == "map_Pr") return &m.map_Pr;
+		if (prefix == "map_Pm") return &m.map_Pm;
+		if (prefix == "map_Ke") return &m.map_Ke;
+		if (prefix == "map_Bump" || prefix == "map_bump" || prefix == "bump" || prefix == "map_Disp" || prefix == "disp")
+			return &m.map_Bump;
+		return nullptr;
+	}
+
 	void Model::ParseMtl(const std::string& mtlPath) {
 		std::ifstream file(mtlPath);
 		if (!file.is_open()) {
@@ -272,8 +286,7 @@ namespace Lucerna {
 				else if (prefix == "Tr") { float tr; ss >> tr; m.d = 1.0f - tr; } // Tr = 1 - d
 				else if (prefix == "Pr") ss >> m.Pr;
 				else if (prefix == "Pm") ss >> m.Pm;
-				else if (prefix == "map_Kd" || prefix == "map_Bump" || prefix == "map_bump"
-				         || prefix == "bump" || prefix == "map_Disp" || prefix == "disp" || prefix == "map_d") {
+				else if (std::string* target = MapTarget(m, prefix)) {
 					// le map possono avere opzioni (-o, -s, -bm, ...): il filename e' l'ULTIMO token
 					std::string token, last;
 					while (ss >> token) last = token;
@@ -282,10 +295,9 @@ namespace Lucerna {
 					// MTL esportati su Windows (Bistro) scrivono "..\Textures\x.png": su Linux il
 					// backslash non separa le cartelle, quindi si normalizza sempre a "/"
 					std::replace(last.begin(), last.end(), '\\', '/');
-					std::string& target = (prefix == "map_Kd") ? m.map_Kd : (prefix == "map_d") ? m.map_d : m.map_Bump;
 					// se un materiale ne ha piu' d'uno, vince il primo
-					if (prefix == "map_Kd" || target.empty())
-						target = (mtlDir / last).lexically_normal().string();
+					if (prefix == "map_Kd" || target->empty())
+						*target = (mtlDir / last).lexically_normal().string();
 				}
 			}
 		}

@@ -58,6 +58,16 @@ namespace Lucerna {
 		// nella geometria non opaca del BLAS. Lo decidono i loader, la UI cambia solo la soglia.
 		ObjectId AlphaTexture;       // texture di dati (canale rosso), nil = alpha dell'albedo
 		float AlphaCutoff = 0.0f;    // il raggio passa dove l'alpha e' sotto la soglia; 0 = opaco
+
+		// Mappe PBR (issue #15). Roughness e Metalness sopra sono fattori che moltiplicano la mappa,
+		// come nel glTF. I canali sono fissi, quelli dell'ORM glTF: roughness nel verde, metallic
+		// nel blu. Il glTF mette la stessa immagine in entrambi i campi; un file MTL in scala di
+		// grigi (map_Pr, map_Pm) ha G = B, quindi funziona uguale. L'occlusione (rosso) si ignora:
+		// il path tracer la calcola.
+		ObjectId RoughnessTexture;   // texture di dati, canale verde; nil = solo il fattore
+		ObjectId MetallicTexture;    // texture di dati, canale blu; nil = solo il fattore
+		// Emissione = EmissiveColor * EmissiveStrenght * mappa: una texture a colori (sRGB)
+		ObjectId EmissiveTexture;    // nil = emissione uniforme
 	};
 
 	// Dielettrico opaco "sano" nel senso del modello Principled: riflesso non tinto
@@ -79,7 +89,9 @@ namespace Lucerna {
 			Field("noiseColorA", &M::NoiseColorA), Field("noiseColorB", &M::NoiseColorB),
 			Field("metalness", &M::Metalness), Field("specularTint", &M::SpecularTint),
 			Field("normalTexture", &M::NormalTexture), Field("normalStrength", &M::NormalStrength), Field("normalFlipY", &M::NormalFlipY),
-			Field("alphaTexture", &M::AlphaTexture), Field("alphaCutoff", &M::AlphaCutoff));
+			Field("alphaTexture", &M::AlphaTexture), Field("alphaCutoff", &M::AlphaCutoff),
+			Field("roughnessTexture", &M::RoughnessTexture), Field("metallicTexture", &M::MetallicTexture),
+			Field("emissiveTexture", &M::EmissiveTexture));
 	}
 
 	static Material CreateDefaultPrincipled(glm::vec4 color = { 0.8f, 0.8f, 0.8f, 1.0f }) {

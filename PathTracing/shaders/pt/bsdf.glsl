@@ -84,7 +84,7 @@ vec3 CosineSampleHemisphere(vec3 n, float u1, float u2) {
 // selezione dei lobi: se divergessero, la MIS diventerebbe biased.
 BsdfParams GetBsdfParams(HitInfo hit, Material material, float lod) {
     BsdfParams pr;
-    pr.metalness = clamp(material.Metalness, 0.0, 1.0);
+    pr.metalness = clamp(SampleMetalness(material, hit.UV, lod), 0.0, 1.0);
     vec3 albedo = SampleAlbedo(material, hit.UV, hit.HitPosition, lod);
     pr.baseColor = vec3(material.Color) * albedo;
 
@@ -94,7 +94,11 @@ BsdfParams GetBsdfParams(HitInfo hit, Material material, float lod) {
     vec3 dielSpec = dielF0 * mix(vec3(1.0), tintHue, clamp(material.SpecularTint, 0.0, 1.0));
     pr.F0 = mix(dielSpec, pr.baseColor, pr.metalness);
 
-    float roughness = clamp(material.Roughness, 0.0, 1.0);
+    float roughness = clamp(SampleRoughness(material, hit.UV, lod), 0.0, 1.0);
+    // La mappa scala anche la rifrazione: nel glTF la roughness e' una sola per i due lobi
+    pr.refrRoughness = material.RefractionRoughness;
+    if(material.RoughnessTexture >= 0.0)
+        pr.refrRoughness *= textureLod(DataTextures, vec3(hit.UV, material.RoughnessTexture), lod).g;
     pr.alpha = max(roughness * roughness, 1e-3);
 
     pr.pRefr = material.RefractionProbability * (1.0 - pr.metalness);
@@ -193,7 +197,7 @@ vec3 BSDF(inout Ray ray, HitInfo hit, Material material, BsdfParams pr, out floa
 
         ray.Origin = hitPos + hit.GeoNormal * 0.001 * side;
         ray.Direction = normalize(mix(dir, normalize(side * N + GetRandomVector(rndSeed)),
-                                      material.RefractionRoughness * material.RefractionRoughness));
+                                      pr.refrRoughness * pr.refrRoughness));
         return vec3(1.0 / pr.pRefr); // la tinta arriva dal Beer-Lambert nel segmento interno
     }
 

@@ -60,17 +60,22 @@ namespace Lucerna {
 		float NormalFlipY = 0.0f;
 		float AlphaTexture = -1.0f;   // layer nell'array di dati
 		float AlphaCutoff = 0.0f;
-		float _pad2 = 0.0f;
+		float RoughnessTexture = -1.0f; // layer nell'array di dati (canale verde)
+		float MetallicTexture = -1.0f;  // layer nell'array di dati (canale blu)
+		float EmissiveTexture = -1.0f;  // layer nell'array a colori
+		glm::vec2 _pad2{ 0.0f };
 	};
 
 	static_assert(sizeof(GpuSphere) == 32 && sizeof(GpuQuad) == 64, "GpuSphere e GpuQuad devono combaciare con lo std430");
-	static_assert(sizeof(GpuMaterial) == 192, "GpuMaterial deve essere 192 byte per combaciare con lo std430");
+	static_assert(sizeof(GpuMaterial) == 208, "GpuMaterial deve essere 208 byte per combaciare con lo std430");
 	static_assert(offsetof(GpuMaterial, RefractionColor) == 80, "RefractionColor deve stare a 80 (std430 allinea i vec4 a 16)");
 	static_assert(offsetof(GpuMaterial, AlbedoTexture) == 96, "AlbedoTexture deve stare a 96");
 	static_assert(offsetof(GpuMaterial, NoiseColorA) == 128, "NoiseColorA deve stare a 128");
 	static_assert(offsetof(GpuMaterial, Metalness) == 160, "Metalness deve stare a 160");
 	static_assert(offsetof(GpuMaterial, NormalTexture) == 168, "NormalTexture deve stare a 168");
 	static_assert(offsetof(GpuMaterial, AlphaCutoff) == 184, "AlphaCutoff deve stare a 184");
+	static_assert(offsetof(GpuMaterial, RoughnessTexture) == 188 && offsetof(GpuMaterial, EmissiveTexture) == 196,
+	              "le mappe PBR devono stare a 188, 192 e 196");
 
 	// Posizioni e normali stanno in due buffer distinti: le posizioni sono anche l'ingresso dei
 	// BLAS, che non devono vedere nient'altro.

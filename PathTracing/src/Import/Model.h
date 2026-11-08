@@ -24,6 +24,9 @@ namespace Lucerna {
 		std::string map_Kd;     // path texture diffuse gia' risolto, vuoto = nessuna
 		std::string map_Bump;   // normal map in spazio tangente (map_Bump, bump o map_Disp)
 		std::string map_d;      // alpha mask in scala di grigi
+		std::string map_Pr;     // roughness PBR, in scala di grigi (issue #15)
+		std::string map_Pm;     // metallic PBR, in scala di grigi
+		std::string map_Ke;     // emissione a colori: moltiplica Ke
 	};
 
 	class Model {

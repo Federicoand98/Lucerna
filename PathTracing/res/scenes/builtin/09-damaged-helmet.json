@@ -2,7 +2,7 @@
   "assets": {
     "materials": [
       {
-        "albedoTexture": "53e55b764bf2507b",
+        "albedoTexture": "d31c5fe4c40301d7",
         "alphaCutoff": 0.0,
         "alphaTexture": "",
         "checker": 0.0,
@@ -19,8 +19,10 @@
           1.0,
           1.0
         ],
-        "emissiveStrength": 0.0,
-        "id": "395cc93f33ad1503",
+        "emissiveStrength": 1.0,
+        "emissiveTexture": "6895410575ed1927",
+        "id": "d8e1efa7925f7451",
+        "metallicTexture": "925b434e8183f36b",
         "metalness": 1.0,
         "name": "Material_MR",
         "noiseBlend": 1.0,
@@ -42,7 +44,7 @@
         "noiseType": 0.0,
         "normalFlipY": 0.0,
         "normalStrength": 1.0,
-        "normalTexture": "03ab1a26393c6e0c",
+        "normalTexture": "62f658232fa96ae8",
         "refractionColor": [
           1.0,
           1.0,
@@ -53,6 +55,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 1.0,
         "roughness": 1.0,
+        "roughnessTexture": "925b434e8183f36b",
         "specularColor": [
           1.0,
           1.0,
@@ -65,7 +68,7 @@
     ],
     "meshes": [
       {
-        "id": "4fdf0a160e67042e",
+        "id": "53feaf977e1df955",
         "materialSlots": [],
         "name": "mesh_helmet_LP_13930damagedHelmet",
         "source": {
@@ -77,16 +80,28 @@
     ],
     "textures": [
       {
-        "id": "03ab1a26393c6e0c",
+        "id": "62f658232fa96ae8",
         "kind": "data",
         "name": "Default_normal",
         "path": "../../models/DamagedHelmet/Default_normal.jpg"
       },
       {
-        "id": "53e55b764bf2507b",
+        "id": "d31c5fe4c40301d7",
         "kind": "color",
         "name": "Default_albedo",
         "path": "../../models/DamagedHelmet/Default_albedo.jpg"
+      },
+      {
+        "id": "925b434e8183f36b",
+        "kind": "data",
+        "name": "Default_metalRoughness",
+        "path": "../../models/DamagedHelmet/Default_metalRoughness.jpg"
+      },
+      {
+        "id": "6895410575ed1927",
+        "kind": "color",
+        "name": "Default_emissive",
+        "path": "../../models/DamagedHelmet/Default_emissive.jpg"
       }
     ]
   },
@@ -114,9 +129,9 @@
   "environmentMapping": false,
   "meshes": [
     {
-      "asset": "4fdf0a160e67042e",
-      "id": "cf069b0909550315",
-      "material": "395cc93f33ad1503",
+      "asset": "53feaf977e1df955",
+      "id": "119b686b4594bd06",
+      "material": "d8e1efa7925f7451",
       "name": "mesh_helmet_LP_13930damagedHelmet",
       "transform": [
         1.0,

@@ -80,6 +80,11 @@ struct Material {
     float NormalFlipY;    // 1 = canale verde invertito (convenzione DirectX)
     float AlphaTexture;   // layer in DataTextures (canale rosso), < 0 = alpha dell'albedo
     float AlphaCutoff;    // > 0 = mascherato: il raggio passa dove l'alpha e' sotto la soglia
+    // Mappe PBR (issue #15): Roughness, Metalness e l'emissione sono fattori che le moltiplicano
+    float RoughnessTexture; // layer in DataTextures (canale verde), < 0 = solo il fattore
+    float MetallicTexture;  // layer in DataTextures (canale blu), < 0 = solo il fattore
+    float EmissiveTexture;  // layer in AlbedoTextures (sRGB), < 0 = emissione uniforme
+    // std430 arrotonda la struct a 208 byte (multiplo di 16): GpuMaterial ha il padding esplicito
 };
 
 // Emettitore per la Next Event Estimation. Deve combaciare con GPULight (Primitives.h).
@@ -105,6 +110,7 @@ struct BsdfParams {
     float pSpec;   // prob. di scegliere il lobo speculare
     float pDiff;   // prob. di scegliere il lobo diffuso
     float pRefr;   // prob. di scegliere il lobo di rifrazione (delta)
+    float refrRoughness; // RefractionRoughness per la mappa di roughness (issue #15)
 };
 
 struct HitInfo {

@@ -209,6 +209,9 @@ namespace Lucerna {
 		vulkan13.pNext = &accelerationStructure;
 		vulkan13.dynamicRendering = VK_TRUE;
 		vulkan13.synchronization2 = VK_TRUE;
+		// glslc con --target-env=vulkan1.3 scrive SPIR-V 1.6, dove la dimensione del workgroup e'
+		// LocalSizeId: senza maintenance4 la validation layer la segnala. In 1.3 e' obbligatoria.
+		vulkan13.maintenance4 = VK_TRUE;
 
 		VkPhysicalDeviceVulkan12Features vulkan12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
 		vulkan12.pNext = &vulkan13;

@@ -16,7 +16,8 @@ namespace Lucerna {
 
 	bool AssetLibrary::IsTextureUsed(const ObjectId& id) const {
 		for (const Material& m : m_Materials)
-			if (m.AlbedoTexture == id || m.NormalTexture == id || m.AlphaTexture == id)
+			if (m.AlbedoTexture == id || m.NormalTexture == id || m.AlphaTexture == id
+			    || m.RoughnessTexture == id || m.MetallicTexture == id || m.EmissiveTexture == id)
 				return true;
 		return false;
 	}

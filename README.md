@@ -98,6 +98,7 @@ Lucerna currently has:
 - Thin-lens depth of field and a firefly clamp
 - Albedo textures with mipmaps, plus procedural checker and Perlin noise materials
 - Tangent-space normal maps, in OpenGL or DirectX convention
+- Roughness, metallic and emissive texture maps from glTF and MTL, with textured emitters sampled by next event estimation
 - Alpha-masked geometry (leaves, chains, fences) that lets camera rays and shadows through, while the rest of the scene stays on the opaque hardware path
 - Wavefront OBJ meshes with MTL materials, and glTF 2.0 scenes
 - Live link with Blender: an add-on exports glTF on save and the renderer reloads it
@@ -176,10 +177,8 @@ To enable the Vulkan validation layers in a Release build, set `PT_VALIDATION=1`
 <!-- ROADMAP -->
 ## Roadmap
 
-- Point and spot lights, with glTF light import
 - HDR environment maps with importance sampling
 - Emissive triangles and power-based light selection
-- Roughness, metallic and emissive texture maps
 - A stronger denoiser
 
 See the [open issues][issues-url] for the full list.

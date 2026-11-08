@@ -1,0 +1,16 @@
+# Fixture di LucernaChecks (issue #15)
+# lamp: map_Ke con Ke nullo e il backslash di un MTL esportato su Windows -> emette, strength 1
+newmtl lamp
+Kd 1 1 1
+Ke 0 0 0
+map_Ke tex\emit.png
+# rough: le mappe senza fattore -> roughness dal Pr, metallic 1
+newmtl rough
+Kd 0.5 0.5 0.5
+Pr 0.5
+map_Pr tex/rough.png
+map_Pm tex/metal.png
+# missing: la mappa non c'e' su disco -> nessuna emissione
+newmtl missing
+Kd 0.5 0.5 0.5
+map_Ke tex/missing.png

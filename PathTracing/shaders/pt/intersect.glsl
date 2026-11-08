@@ -7,6 +7,17 @@ vec2 SphereUV(vec3 normal) {
                 0.5 + asin(clamp(normal.y, -1.0, 1.0)) / PI);
 }
 
+// Le UV di un punto del quad, dato relativo al suo angolo LLC. Il quad si estende per Width lungo
+// U e Height lungo V: le coordinate affini del punto lungo quei due assi, normalizzate, sono gia'
+// le UV. La usano l'intersezione e la NEE (lights.glsl), che devono leggere lo stesso texel.
+vec2 QuadUV(Quad quad, vec3 local) {
+    vec3 planeNormal = cross(vec3(quad.U), vec3(quad.V));
+    vec3 wVec = planeNormal / (dot(planeNormal, planeNormal) + 0.0001);
+    float alpha = dot(wVec, cross(local, vec3(quad.V)));
+    float beta = dot(wVec, cross(vec3(quad.U), local));
+    return vec2(alpha / quad.Width, beta / quad.Height);
+}
+
 bool HitSphere(Ray ray, Sphere sphere, out float t1, out float t2) {
     vec3 spherePos = vec3(sphere.Position);
     float radius = sphere.Position.w;

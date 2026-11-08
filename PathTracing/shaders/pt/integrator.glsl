@@ -5,10 +5,6 @@ vec2 RandomInUnitDisk() {
     return r * vec2(cos(theta), sin(theta));
 }
 
-// Livello di mip dopo il primo rimbalzo. Il dettaglio fine di una texture vista per riflesso
-// indiretto si media comunque via: un mip ridotto da' lo stesso valore atteso con molti meno
-// cache miss, perche' i raggi secondari sono incoerenti e saltano per tutta la texture.
-const float SECONDARY_TEXTURE_LOD = 2.0;
 
 vec3 PerPixel(vec2 ndc) {
     Ray ray = CalculateRayFromCamera(inverseProjection, inverseView, cameraPosition, ndc);
@@ -87,7 +83,7 @@ vec3 PerPixel(vec2 ndc) {
         // (1) EMISSIONE della superficie, pesata in MIS. Senza NEE (numLights==0 o vertice
         //     dopo un lobo delta) il peso e' 1 e il comportamento coincide con quello storico.
         if(material.EmissiveStrenght > 0.0) {
-            vec3 Le = vec3(material.EmissiveColor) * material.EmissiveStrenght;
+            vec3 Le = SampleEmission(material, hit.UV, i == 0 ? 0.0 : SECONDARY_TEXTURE_LOD);
             float w = 1.0;
             if(!prevDelta && numLights > 0) {
                 float pdfL = LightPdfToward(prevPos, hit);

@@ -6,6 +6,7 @@
 #include "Import/SceneFiles.h"
 #include "Import/Importer.h"
 #include "Serialization/BuiltinScenes.h"
+#include "Serialization/SceneSerializer.h"
 #include "Editor/Document.h"
 #include "Core/Paths.h"
 
@@ -188,6 +189,70 @@ int main() {
 	CHECK(!reopenedDoc.CanSaveInPlace() && !reopenedDoc.Save(reopened, reopenedAssets, reopenedSettings));
 	CHECK(reopenedDoc.OpenBuiltin(builtin.front(), reopened, reopenedAssets, reopenedSettings) && !reopenedDoc.CanSaveInPlace());
 	std::filesystem::remove("build/check_document.json");
+
+	// Mappe PBR (issue #15). Le fixture stanno in tests/data/pbr.
+	auto materialNamed = [](const AssetLibrary& lib, const std::string& name) -> const Material* {
+		for (const auto& m : lib.Materials())
+			if (m.Name == name)
+				return &m;
+		return nullptr;
+	};
+	auto textureFile = [](const AssetLibrary& lib, const ObjectId& id, TextureKind kind) {
+		const int i = lib.Textures().IndexOf(id);
+		return i >= 0 && lib.Textures()[i].Kind == kind ? std::filesystem::path(lib.Textures()[i].Path).filename().string() : std::string();
+	};
+
+	// MTL: map_Ke con Ke nullo accende con strength 1 (anche col backslash di Windows); le mappe
+	// senza fattore danno fattore 1; una mappa assente su disco non accende niente
+	Scene pbrObj;
+	AssetLibrary pbrObjAssets;
+	CHECK(OpenFile("tests/data/pbr/pbr.obj", pbrObj, pbrObjAssets));
+	const Material* lamp = materialNamed(pbrObjAssets, "lamp");
+	CHECK(lamp && textureFile(pbrObjAssets, lamp->EmissiveTexture, TextureKind::Color) == "emit.png");
+	CHECK(lamp && lamp->EmissiveStrenght == 1.0f && lamp->EmissiveColor == glm::vec4(1.0f));
+	const Material* rough = materialNamed(pbrObjAssets, "rough");
+	CHECK(rough && textureFile(pbrObjAssets, rough->RoughnessTexture, TextureKind::Data) == "rough.png");
+	CHECK(rough && textureFile(pbrObjAssets, rough->MetallicTexture, TextureKind::Data) == "metal.png");
+	CHECK(rough && rough->Roughness == 0.5f && rough->RefractionRoughness == 0.5f && rough->Metalness == 1.0f);
+	const Material* missing = materialNamed(pbrObjAssets, "missing");
+	CHECK(missing && missing->EmissiveTexture.IsNil() && missing->EmissiveStrenght == 0.0f);
+
+	// glTF: l'ORM va in roughness e metallic come la stessa texture di dati, l'occlusione no;
+	// l'emissive texture e' a colori e conta solo con un fattore non nullo
+	Scene pbrGltf;
+	AssetLibrary pbrGltfAssets;
+	CHECK(OpenFile("tests/data/pbr/pbr.gltf", pbrGltf, pbrGltfAssets));
+	const Material* orm = materialNamed(pbrGltfAssets, "orm");
+	CHECK(orm && !orm->RoughnessTexture.IsNil() && orm->RoughnessTexture == orm->MetallicTexture);
+	CHECK(orm && textureFile(pbrGltfAssets, orm->RoughnessTexture, TextureKind::Data) == "orm.png");
+	CHECK(orm && orm->Roughness == 0.8f && orm->Metalness == 0.5f);
+	const Material* glow = materialNamed(pbrGltfAssets, "glow");
+	CHECK(glow && textureFile(pbrGltfAssets, glow->EmissiveTexture, TextureKind::Color) == "emit.png");
+	CHECK(glow && glow->EmissiveStrenght == 1.0f && glow->EmissiveColor == glm::vec4(1.0f, 0.5f, 0.0f, 1.0f));
+	const Material* dark = materialNamed(pbrGltfAssets, "dark");
+	CHECK(dark && dark->EmissiveTexture.IsNil() && dark->EmissiveStrenght == 0.0f);
+	CHECK(pbrGltfAssets.Textures().size() == 2); // orm e emit: niente occlusion
+
+	// Le mappe si salvano con la scena e si rileggono; una scena di prima della #15 le ha a nil
+	CHECK(SceneSerializer(pbrGltf, pbrGltfAssets).Serialize("build/check_pbr.json"));
+	Scene pbrReopened;
+	AssetLibrary pbrReopenedAssets;
+	CHECK(SceneSerializer(pbrReopened, pbrReopenedAssets).Deserialize("build/check_pbr.json"));
+	const Material* ormReopened = materialNamed(pbrReopenedAssets, "orm");
+	const Material* glowReopened = materialNamed(pbrReopenedAssets, "glow");
+	CHECK(ormReopened && ormReopened->RoughnessTexture == ormReopened->MetallicTexture
+	      && textureFile(pbrReopenedAssets, ormReopened->RoughnessTexture, TextureKind::Data) == "orm.png");
+	CHECK(glowReopened && textureFile(pbrReopenedAssets, glowReopened->EmissiveTexture, TextureKind::Color) == "emit.png");
+	std::filesystem::remove("build/check_pbr.json");
+	Scene oldScene;
+	AssetLibrary oldAssets;
+	RenderSettings oldSettings;
+	Document oldDocument;
+	CHECK(oldDocument.OpenBuiltin(*FindBuiltinScene(builtin, "sponza"), oldScene, oldAssets, oldSettings));
+	bool noMaps = !oldAssets.Materials().empty();
+	for (const auto& m : oldAssets.Materials())
+		noMaps = noMaps && m.RoughnessTexture.IsNil() && m.MetallicTexture.IsNil() && m.EmissiveTexture.IsNil();
+	CHECK(noMaps);
 
 	std::printf(failures ? "%d checks failed\n" : "all checks passed\n", failures);
 	return failures ? 1 : 0;

@@ -34,12 +34,16 @@ namespace Lucerna {
 			return p.lexically_normal().string();
 		}
 
-		// pbrMetallicRoughness -> Material dell'engine. La registrazione della texture (privata
-		// della libreria) la fa il chiamante: qui il path della base color texture esce da baseTexOut.
-		Material MaterialFromGltf(const cgltf_material& gm, const std::string& gltfDir, std::string& baseTexOut, std::string& normalTexOut) {
+		// I path delle texture di un materiale glTF, vuoti se assenti. Le registra il chiamante
+		// (la registrazione e' della libreria): MaterialFromGltf li risolve soltanto.
+		struct GltfTexturePaths {
+			std::string Base, Normal, MetallicRoughness, Emissive;
+		};
+
+		// pbrMetallicRoughness -> Material dell'engine, piu' i path delle sue texture.
+		Material MaterialFromGltf(const cgltf_material& gm, const std::string& gltfDir, GltfTexturePaths& textures) {
 			Material m;
-			baseTexOut.clear();
-			normalTexOut.clear();
+			textures = {};
 
 			glm::vec4 baseColor(1.0f);
 			const cgltf_texture* baseTex = nullptr;
@@ -51,6 +55,11 @@ namespace Lucerna {
 				metallic = pbr.metallic_factor;
 				roughness = pbr.roughness_factor;
 				baseTex = pbr.base_color_texture.texture;
+				// L'ORM glTF: G roughness, B metallic (R occlusione, ignorata: issue #15). Va in
+				// entrambi i campi, che leggono canali diversi della stessa immagine.
+				const cgltf_texture* metalRough = pbr.metallic_roughness_texture.texture;
+				if (metalRough && metalRough->image)
+					textures.MetallicRoughness = ResolveTextureUri(gltfDir, metalRough->image);
 			}
 
 			m.Color = baseColor;
@@ -77,8 +86,13 @@ namespace Lucerna {
 				m.EmissiveStrenght = ke;
 			}
 
+			// emissiveTexture: moltiplica il fattore, come vuole il glTF. Con il fattore a zero
+			// la texture non accende niente, e allora non serve caricarla.
+			if (ke > 0.0f && gm.emissive_texture.texture && gm.emissive_texture.texture->image)
+				textures.Emissive = ResolveTextureUri(gltfDir, gm.emissive_texture.texture->image);
+
 			if (baseTex && baseTex->image)
-				baseTexOut = ResolveTextureUri(gltfDir, baseTex->image);
+				textures.Base = ResolveTextureUri(gltfDir, baseTex->image);
 
 			// MASK e BLEND diventano entrambi una maschera sull'alpha dell'albedo: la trasparenza
 			// parziale non e' gestita (ADR 0008). cgltf mette gia' a 0.5 il cutoff assente.
@@ -89,7 +103,7 @@ namespace Lucerna {
 
 			// normalTexture: convenzione OpenGL (+Y), e lo scale glTF e' la nostra NormalStrength
 			if (gm.normal_texture.texture && gm.normal_texture.texture->image) {
-				normalTexOut = ResolveTextureUri(gltfDir, gm.normal_texture.texture->image);
+				textures.Normal = ResolveTextureUri(gltfDir, gm.normal_texture.texture->image);
 				m.NormalStrength = gm.normal_texture.scale;
 			}
 			return m;
@@ -287,14 +301,19 @@ namespace Lucerna {
 			std::unordered_map<const cgltf_material*, ObjectId> materialIds;
 			for (size_t i = 0; i < data->materials_count; i++) {
 				const cgltf_material& gm = data->materials[i];
-				std::string baseTex, normalTex;
-				Material m = MaterialFromGltf(gm, gltfDir, baseTex, normalTex);
-				if (!normalTex.empty())
-					m.NormalTexture = assets.RegisterTexture(normalTex, TextureKind::Data);
-				if (!baseTex.empty()) {
-					m.AlbedoTexture = assets.RegisterTexture(baseTex, TextureKind::Color);
+				GltfTexturePaths textures;
+				Material m = MaterialFromGltf(gm, gltfDir, textures);
+				if (!textures.Normal.empty())
+					m.NormalTexture = assets.RegisterTexture(textures.Normal, TextureKind::Data);
+				if (!textures.Base.empty()) {
+					m.AlbedoTexture = assets.RegisterTexture(textures.Base, TextureKind::Color);
 					m.Color = glm::vec4(1.0f); // la texture porta il colore, non tingerla due volte
 				}
+				// La stessa immagine nei due campi: RegisterTexture la carica una volta sola
+				if (!textures.MetallicRoughness.empty())
+					m.RoughnessTexture = m.MetallicTexture = assets.RegisterTexture(textures.MetallicRoughness, TextureKind::Data);
+				if (!textures.Emissive.empty())
+					m.EmissiveTexture = assets.RegisterTexture(textures.Emissive, TextureKind::Color);
 				materialIds[&gm] = assets.AddMaterial(m, gm.name ? gm.name : "");
 			}
 

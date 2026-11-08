@@ -2,7 +2,7 @@
   "assets": {
     "materials": [
       {
-        "albedoTexture": "bbf3982ad14682df",
+        "albedoTexture": "6830923f8f0f928e",
         "alphaCutoff": 0.0,
         "alphaTexture": "",
         "checker": 0.0,
@@ -20,7 +20,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "43ab3e147851f893",
+        "emissiveTexture": "",
+        "id": "5548a8181a9e7e5a",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Artwork",
         "noiseBlend": 1.0,
@@ -53,6 +55,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.8164966106414795,
         "roughness": 0.8164966106414795,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -81,7 +84,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "c688a0b90269eff0",
+        "emissiveTexture": "",
+        "id": "87dea57a29de417e",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Black_Rubber",
         "noiseBlend": 1.0,
@@ -114,6 +119,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.14279887080192566,
         "roughness": 0.14279887080192566,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -142,7 +148,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "224222e25f2eab26",
+        "emissiveTexture": "",
+        "id": "c18e93d2f41a9b54",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Ceramic",
         "noiseBlend": 1.0,
@@ -175,6 +183,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.14002801477909088,
         "roughness": 0.14002801477909088,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -203,7 +212,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "08855f7f08565e2b",
+        "emissiveTexture": "",
+        "id": "44d4195785240b2b",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Ceramic_001",
         "noiseBlend": 1.0,
@@ -236,6 +247,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.3162277638912201,
         "roughness": 0.3162277638912201,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -264,7 +276,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "c4f40b4696da92ab",
+        "emissiveTexture": "",
+        "id": "4ca2de61ad0cb553",
+        "metallicTexture": "",
         "metalness": 1.0,
         "name": "breakfast_room:Chrome",
         "noiseBlend": 1.0,
@@ -297,6 +311,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.14002801477909088,
         "roughness": 0.08,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -307,7 +322,7 @@
         "specularTint": 0.0
       },
       {
-        "albedoTexture": "7073e212d881dd88",
+        "albedoTexture": "26a2a9f6380bf494",
         "alphaCutoff": 0.0,
         "alphaTexture": "",
         "checker": 0.0,
@@ -325,7 +340,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "a551ab3f6b2eec53",
+        "emissiveTexture": "",
+        "id": "3b779ac66ddb329c",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Floor_Tiles",
         "noiseBlend": 1.0,
@@ -358,6 +375,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.25,
         "roughness": 0.25,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -386,7 +404,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "5e8d855030c67f35",
+        "emissiveTexture": "",
+        "id": "a9abcbf0cb28f847",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Frosted_Glass",
         "noiseBlend": 1.0,
@@ -419,6 +439,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.30151134729385376,
         "roughness": 0.30151134729385376,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -447,7 +468,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "68bbd053fa000928",
+        "emissiveTexture": "",
+        "id": "3a8716bedc9e63f9",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Gold_Paint",
         "noiseBlend": 1.0,
@@ -480,6 +503,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.40824830532073975,
         "roughness": 0.40824830532073975,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -508,7 +532,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "dd2fbaf5c3553ff2",
+        "emissiveTexture": "",
+        "id": "ec304e9becb6c84c",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Material_002",
         "noiseBlend": 1.0,
@@ -541,6 +567,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.3162277638912201,
         "roughness": 0.3162277638912201,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -569,7 +596,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "d7fc23474797e31d",
+        "emissiveTexture": "",
+        "id": "eb6a64cd1906eb1b",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Material_005",
         "noiseBlend": 1.0,
@@ -602,6 +631,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.3162277638912201,
         "roughness": 0.3162277638912201,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -630,7 +660,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "e3eb4060477fd075",
+        "emissiveTexture": "",
+        "id": "e659c132386fe7d3",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Paint___Black_Satin",
         "noiseBlend": 1.0,
@@ -663,6 +695,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.30151134729385376,
         "roughness": 0.30151134729385376,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -691,7 +724,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "4e1ec9a8f9becaa8",
+        "emissiveTexture": "",
+        "id": "c81597b63626fd6e",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Paint___White_Gloss",
         "noiseBlend": 1.0,
@@ -724,6 +759,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.5345224738121033,
         "roughness": 0.5345224738121033,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -752,7 +788,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "4817c56b73f308c2",
+        "emissiveTexture": "",
+        "id": "ce317aa7e0b849c8",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:Paint___White_Matt",
         "noiseBlend": 1.0,
@@ -785,6 +823,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.8164966106414795,
         "roughness": 0.8164966106414795,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -813,7 +852,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "6e5e0ab3e190562c",
+        "emissiveTexture": "",
+        "id": "db6cbcb5eee85101",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:White_Marble",
         "noiseBlend": 1.0,
@@ -846,6 +887,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.40824830532073975,
         "roughness": 0.40824830532073975,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -874,7 +916,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "8852b2f18cb339c4",
+        "emissiveTexture": "",
+        "id": "f107d8b054d9a56c",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "breakfast_room:White_Plastic",
         "noiseBlend": 1.0,
@@ -907,6 +951,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 0.40824830532073975,
         "roughness": 0.40824830532073975,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -935,7 +980,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "9360b4f7ce1175b1",
+        "emissiveTexture": "",
+        "id": "5304f0024bd62059",
+        "metallicTexture": "",
         "metalness": 0.0,
         "name": "Default",
         "noiseBlend": 1.0,
@@ -968,6 +1015,7 @@
         "refractionRatio": 1.4500000476837158,
         "refractionRoughness": 0.5,
         "roughness": 0.5,
+        "roughnessTexture": "",
         "specularColor": [
           1.0,
           1.0,
@@ -980,23 +1028,23 @@
     ],
     "meshes": [
       {
-        "id": "7b8993232a19d7c0",
+        "id": "da48b5f07a9979b1",
         "materialSlots": [
-          "43ab3e147851f893",
-          "c688a0b90269eff0",
-          "224222e25f2eab26",
-          "08855f7f08565e2b",
-          "c4f40b4696da92ab",
-          "a551ab3f6b2eec53",
-          "5e8d855030c67f35",
-          "68bbd053fa000928",
-          "dd2fbaf5c3553ff2",
-          "d7fc23474797e31d",
-          "e3eb4060477fd075",
-          "4e1ec9a8f9becaa8",
-          "4817c56b73f308c2",
-          "6e5e0ab3e190562c",
-          "8852b2f18cb339c4"
+          "5548a8181a9e7e5a",
+          "87dea57a29de417e",
+          "c18e93d2f41a9b54",
+          "44d4195785240b2b",
+          "4ca2de61ad0cb553",
+          "3b779ac66ddb329c",
+          "a9abcbf0cb28f847",
+          "3a8716bedc9e63f9",
+          "ec304e9becb6c84c",
+          "eb6a64cd1906eb1b",
+          "e659c132386fe7d3",
+          "c81597b63626fd6e",
+          "ce317aa7e0b849c8",
+          "db6cbcb5eee85101",
+          "f107d8b054d9a56c"
         ],
         "name": "breakfast_room.obj",
         "source": {
@@ -1008,13 +1056,13 @@
     ],
     "textures": [
       {
-        "id": "bbf3982ad14682df",
+        "id": "6830923f8f0f928e",
         "kind": "color",
         "name": "picture3",
         "path": "../../models/BreakfastRoom/picture3.jpg"
       },
       {
-        "id": "7073e212d881dd88",
+        "id": "26a2a9f6380bf494",
         "kind": "color",
         "name": "tiles",
         "path": "../../models/BreakfastRoom/tiles.png"
@@ -1045,9 +1093,9 @@
   "environmentMapping": false,
   "meshes": [
     {
-      "asset": "7b8993232a19d7c0",
-      "id": "57f8a8b998ab7213",
-      "material": "9360b4f7ce1175b1",
+      "asset": "da48b5f07a9979b1",
+      "id": "73a94e963847fb87",
+      "material": "5304f0024bd62059",
       "name": "breakfast_room.obj",
       "transform": [
         1.0,

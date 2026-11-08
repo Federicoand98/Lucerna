@@ -29,6 +29,27 @@ namespace Lucerna {
 				m.EmissiveStrenght = ke;
 			}
 
+			// Mappe PBR (issue #15). Il fattore moltiplica la mappa; se il file da' la mappa ma non
+			// il fattore, il fattore vale 1 (come l'importer OBJ di Blender): Bistro accende cosi'
+			// le sue lanterne, che hanno map_Ke e Ke 0. Una mappa citata ma assente si ignora del
+			// tutto, fattore implicito compreso: un emettitore bianco uniforme sarebbe peggio.
+			if (!mm.map_Pr.empty() && std::filesystem::exists(mm.map_Pr)) {
+				m.RoughnessTexture = assets.RegisterTexture(mm.map_Pr, TextureKind::Data);
+				m.Roughness = (mm.Pr >= 0.0f) ? glm::clamp(mm.Pr, 0.0f, 1.0f) : 1.0f;
+				m.RefractionRoughness = m.Roughness;
+			}
+			if (!mm.map_Pm.empty() && std::filesystem::exists(mm.map_Pm)) {
+				m.MetallicTexture = assets.RegisterTexture(mm.map_Pm, TextureKind::Data);
+				m.Metalness = (mm.Pm >= 0.0f) ? glm::clamp(mm.Pm, 0.0f, 1.0f) : 1.0f;
+			}
+			if (!mm.map_Ke.empty() && std::filesystem::exists(mm.map_Ke)) {
+				m.EmissiveTexture = assets.RegisterTexture(mm.map_Ke, TextureKind::Color);
+				if (ke <= 0.0f) {
+					m.EmissiveColor = glm::vec4(1.0f);
+					m.EmissiveStrenght = 1.0f;
+				}
+			}
+
 			// map_Kd: la texture porta il colore, quindi Color va a bianco per non tingerla due volte
 			if (!mm.map_Kd.empty()) {
 				m.AlbedoTexture = assets.RegisterTexture(mm.map_Kd, TextureKind::Color);

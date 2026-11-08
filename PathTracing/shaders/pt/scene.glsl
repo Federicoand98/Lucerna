@@ -66,13 +66,7 @@ HitInfo HandleHit(Ray ray, float hitDistance, int index, int objType, bool insid
         vec3 hitPosition = origin + ray.Direction * hitDistance;
         vec3 normal = normalize(cross(vec3(quad.U), vec3(quad.V)));
 
-        // il quad si estende per Width lungo U e Height lungo V: le coordinate affini
-        // del punto d'impatto lungo quei due assi, normalizzate, sono gia' le UV
-        vec3 planeNormal = cross(vec3(quad.U), vec3(quad.V));
-        vec3 wVec = planeNormal / (dot(planeNormal, planeNormal) + 0.0001);
-        float alpha = dot(wVec, cross(hitPosition, vec3(quad.V)));
-        float beta = dot(wVec, cross(vec3(quad.U), hitPosition));
-        vec2 uv = vec2(alpha / quad.Width, beta / quad.Height);
+        vec2 uv = QuadUV(quad, hitPosition);
 
         hitPosition += closestPosition;
 

@@ -4,6 +4,28 @@
 // qualunque geometria. Combacia con il tMax di TraceRay.
 const float SUN_DISTANCE = 100000.0;
 
+// La mappa emissive nel punto q di una sfera o di un quad emissivo, 1 se il materiale non ne ha.
+// Emission.rgb della luce e' colore * strength, uguale su tutta la superficie: la mappa si
+// applica qui, nel punto campionato, con le stesse UV che vedrebbe un raggio che lo colpisce,
+// altrimenti NEE e raggio BSDF stimerebbero due luci diverse e la MIS sarebbe biased (issue #15).
+vec3 EmitterTexture(Light L, vec3 q) {
+    int index = L.Meta.z;
+    if(L.Meta.x == 0) {
+        Sphere sphere = Spheres[index];
+        Material m = Materials[clamp(int(sphere.Mat), 0, numMaterials - 1)];
+        if(m.EmissiveTexture < 0.0)
+            return vec3(1.0);
+        vec2 uv = SphereUV(normalize(q - sphere.Position.xyz));
+        return textureLod(AlbedoTextures, vec3(uv, m.EmissiveTexture), SECONDARY_TEXTURE_LOD).rgb;
+    }
+    Quad quad = Quads[index];
+    Material m = Materials[clamp(int(quad.MaterialIndex), 0, numMaterials - 1)];
+    if(m.EmissiveTexture < 0.0)
+        return vec3(1.0);
+    vec2 uv = QuadUV(quad, q - quad.PositionLLC.xyz);
+    return textureLod(AlbedoTextures, vec3(uv, m.EmissiveTexture), SECONDARY_TEXTURE_LOD).rgb;
+}
+
 // Campiona un emettitore (scelto uniformemente) e restituisce direzione, distanza, radianza
 // e pdf in solid angle (gia' comprensiva di 1/numLights). false = campione non valido.
 // delta = luce punto o spot: nessun raggio BSDF la puo' colpire, quindi peso MIS 1. Per loro
@@ -81,6 +103,7 @@ bool SampleLight(vec3 p, out vec3 wi, out float dist, out vec3 Lrad, out float p
         if(dist <= 0.0)
             dist = d - r;
 
+        Lrad *= EmitterTexture(L, p + wi * dist);
         float solid = 2.0 * PI * (1.0 - cosMax);
         pdf = pickPdf / max(solid, 1e-8);
         return true;
@@ -95,6 +118,7 @@ bool SampleLight(vec3 p, out vec3 wi, out float dist, out vec3 Lrad, out float p
         float cosLgt = abs(dot(L.Normal.xyz, wi)); // emettitore two-sided (come l'emissione sull'hit)
         if(cosLgt < 1e-6)
             return false;
+        Lrad *= EmitterTexture(L, q);
         pdf = pickPdf * dist2 / (cosLgt * L.Emission.a);
         return true;
     }

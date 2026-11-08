@@ -67,6 +67,12 @@ float NoiseValue(Material material, vec3 position) {
     return 0.5 * (1.0 + PerlinNoise(p));
 }
 
+// Livello di mip dopo il primo rimbalzo. Il dettaglio fine di una texture vista per riflesso
+// indiretto si media comunque via: un mip ridotto da' lo stesso valore atteso con molti meno
+// cache miss, perche' i raggi secondari sono incoerenti e saltano per tutta la texture.
+const float SECONDARY_TEXTURE_LOD = 2.0;
+// Lo usa anche la NEE (lights.glsl): un emettitore raggiunto da li' non e' mai il primo vertice.
+
 // Il colore albedo che moltiplica material.Color.
 vec3 SampleAlbedo(Material material, vec2 uv, vec3 position, float lod) {
     vec3 albedo = vec3(1.0);
@@ -98,4 +104,30 @@ vec3 SampleAlbedo(Material material, vec2 uv, vec3 position, float lod) {
     }
 
     return albedo;
+}
+
+// --- Mappe PBR (issue #15) ---------------------------------------------------
+// Il fattore del materiale moltiplica la mappa, come nel glTF. Canali fissi dell'ORM glTF:
+// roughness nel verde, metallic nel blu (un'immagine in grigi ha G = B, e va bene uguale).
+float SampleRoughness(Material material, vec2 uv, float lod) {
+    float roughness = material.Roughness;
+    if(material.RoughnessTexture >= 0.0)
+        roughness *= textureLod(DataTextures, vec3(uv, material.RoughnessTexture), lod).g;
+    return roughness;
+}
+
+float SampleMetalness(Material material, vec2 uv, float lod) {
+    float metalness = material.Metalness;
+    if(material.MetallicTexture >= 0.0)
+        metalness *= textureLod(DataTextures, vec3(uv, material.MetallicTexture), lod).b;
+    return metalness;
+}
+
+// La radianza emessa nel punto: colore * strength * mappa a colori. La usano sia il raggio che
+// colpisce l'emettitore sia la NEE (lights.glsl), cosi' le due stime vedono la stessa luce.
+vec3 SampleEmission(Material material, vec2 uv, float lod) {
+    vec3 Le = vec3(material.EmissiveColor) * material.EmissiveStrenght;
+    if(material.EmissiveTexture >= 0.0)
+        Le *= textureLod(AlbedoTextures, vec3(uv, material.EmissiveTexture), lod).rgb;
+    return Le;
 }

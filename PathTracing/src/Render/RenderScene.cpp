@@ -180,6 +180,9 @@ namespace Lucerna {
 			g.NormalFlipY = m.NormalFlipY;
 			g.AlphaTexture = layerOf(m.AlphaTexture);
 			g.AlphaCutoff = m.AlphaCutoff;
+			g.RoughnessTexture = layerOf(m.RoughnessTexture);
+			g.MetallicTexture = layerOf(m.MetallicTexture);
+			g.EmissiveTexture = layerOf(m.EmissiveTexture);
 			return g;
 		}
 	}

@@ -2,7 +2,7 @@
   "assets": {
     "materials": [
       {
-        "albedoTexture": "f0c20e8e78780195",
+        "albedoTexture": "28c3f0206169f65b",
         "alphaCutoff": 0.0,
         "alphaTexture": "",
         "checker": 0.0,
@@ -20,7 +20,9 @@
           1.0
         ],
         "emissiveStrength": 0.0,
-        "id": "6b1c6e86c795e3ab",
+        "emissiveTexture": "",
+        "id": "254c815c65680904",
+        "metallicTexture": "0d1a78405a7f9d01",
         "metalness": 1.0,
         "name": "Material",
         "noiseBlend": 1.0,
@@ -53,6 +55,7 @@
         "refractionRatio": 1.0,
         "refractionRoughness": 1.0,
         "roughness": 1.0,
+        "roughnessTexture": "0d1a78405a7f9d01",
         "specularColor": [
           1.0,
           1.0,
@@ -65,7 +68,7 @@
     ],
     "meshes": [
       {
-        "id": "0ddb65200eb87ab7",
+        "id": "2889e8327579fea5",
         "materialSlots": [],
         "name": "Spheres.004",
         "source": {
@@ -75,7 +78,7 @@
         }
       },
       {
-        "id": "4e1d9c9fe29f9648",
+        "id": "0556fd71b270885e",
         "materialSlots": [],
         "name": "Spheres.003",
         "source": {
@@ -85,7 +88,7 @@
         }
       },
       {
-        "id": "d0425dbb9c040df8",
+        "id": "5da1c877da2c8002",
         "materialSlots": [],
         "name": "Spheres.002",
         "source": {
@@ -95,7 +98,7 @@
         }
       },
       {
-        "id": "cb7d36b2cf570553",
+        "id": "63094536071e1618",
         "materialSlots": [],
         "name": "Spheres.001",
         "source": {
@@ -105,7 +108,7 @@
         }
       },
       {
-        "id": "2f379b63fdef6bd6",
+        "id": "7c2d7dbc77d34413",
         "materialSlots": [],
         "name": "Spheres",
         "source": {
@@ -117,10 +120,16 @@
     ],
     "textures": [
       {
-        "id": "f0c20e8e78780195",
+        "id": "28c3f0206169f65b",
         "kind": "color",
         "name": "Spheres_BaseColor",
         "path": "../../models/MetalRoughSpheres/Spheres_BaseColor.png"
+      },
+      {
+        "id": "0d1a78405a7f9d01",
+        "kind": "data",
+        "name": "Spheres_MetalRough",
+        "path": "../../models/MetalRoughSpheres/Spheres_MetalRough.png"
       }
     ]
   },
@@ -148,9 +157,9 @@
   "environmentMapping": false,
   "meshes": [
     {
-      "asset": "0ddb65200eb87ab7",
-      "id": "eff247997a1d303d",
-      "material": "6b1c6e86c795e3ab",
+      "asset": "2889e8327579fea5",
+      "id": "b91b6bf1bb33e1ee",
+      "material": "254c815c65680904",
       "name": "Spheres.004",
       "transform": [
         0.4000000059604645,
@@ -172,9 +181,9 @@
       ]
     },
     {
-      "asset": "4e1d9c9fe29f9648",
-      "id": "71bdf94e0c00450b",
-      "material": "6b1c6e86c795e3ab",
+      "asset": "0556fd71b270885e",
+      "id": "7a36b4713d2ea997",
+      "material": "254c815c65680904",
       "name": "Spheres.003",
       "transform": [
         0.4000000059604645,
@@ -196,9 +205,9 @@
       ]
     },
     {
-      "asset": "d0425dbb9c040df8",
-      "id": "4425751af5d03f23",
-      "material": "6b1c6e86c795e3ab",
+      "asset": "5da1c877da2c8002",
+      "id": "d966de3cdc4d6c42",
+      "material": "254c815c65680904",
       "name": "Spheres.002",
       "transform": [
         0.4000000059604645,
@@ -220,9 +229,9 @@
       ]
     },
     {
-      "asset": "cb7d36b2cf570553",
-      "id": "65949e6d5d2442a1",
-      "material": "6b1c6e86c795e3ab",
+      "asset": "63094536071e1618",
+      "id": "2c235a3e87e93cd7",
+      "material": "254c815c65680904",
       "name": "Spheres.001",
       "transform": [
         0.4000000059604645,
@@ -244,9 +253,9 @@
       ]
     },
     {
-      "asset": "2f379b63fdef6bd6",
-      "id": "a062bdcffd74bdf4",
-      "material": "6b1c6e86c795e3ab",
+      "asset": "7c2d7dbc77d34413",
+      "id": "7118e4f091c2d2e3",
+      "material": "254c815c65680904",
       "name": "Spheres",
       "transform": [
         0.4000000059604645,

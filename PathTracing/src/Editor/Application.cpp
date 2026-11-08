@@ -1052,13 +1052,23 @@ namespace Lucerna {
 
 		ImGui::SeparatorText("Surface");
 
+		// Mappe PBR (issue #15): con una mappa lo slider e' il fattore che la moltiplica, come nel
+		// glTF. Le mappe leggono canali fissi: roughness il verde, metallic il blu.
 		if (UI::SliderFloat("Metallic", &material.Metalness, 0.0f, 1.0f)) changed = true;
+		if (!material.MetallicTexture.IsNil() && ImGui::IsItemHovered())
+			ImGui::SetTooltip("factor: multiplies the blue channel of the metallic map");
+		if (TextureCombo("Metallic map", material.MetallicTexture, TextureKind::Data))
+			edited = true;
 
 		// Un'unica roughness per riflesso e trasmissione, come il Principled.
 		if (UI::SliderFloat("Roughness", &material.Roughness, 0.0f, 1.0f)) {
 			material.RefractionRoughness = material.Roughness;
 			changed = true;
 		}
+		if (!material.RoughnessTexture.IsNil() && ImGui::IsItemHovered())
+			ImGui::SetTooltip("factor: multiplies the green channel of the roughness map");
+		if (TextureCombo("Roughness map", material.RoughnessTexture, TextureKind::Data))
+			edited = true;
 
 		// Specular tint: colora il riflesso di un dielettrico verso la base color. Un metallo
 		// lo ignora (il riflesso e' gia' tinto dall'albedo), quindi si grigia a metallo pieno.
@@ -1107,6 +1117,9 @@ namespace Lucerna {
 		ImGui::SeparatorText("Emission");
 		if (UI::DragFloat("Emissive Strength", &material.EmissiveStrenght, 0.1f, 0.0f, FLT_MAX)) edited = true;
 		if (UI::ColorEdit3("Emissive Color", glm::value_ptr(material.EmissiveColor))) edited = true;
+		// La mappa moltiplica colore e strength: con strength 0 non si accende niente
+		if (TextureCombo("Emission map", material.EmissiveTexture, TextureKind::Color))
+			edited = true;
 
 		ImGui::SeparatorText("Base Color texture");
 		int checkerMode = static_cast<int>(material.Checker + 0.5f);

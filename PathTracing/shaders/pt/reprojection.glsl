@@ -36,7 +36,7 @@ void UpdateAOVs(ivec2 texelCoord, ivec2 imageResultSize) {
             d = aovHit.HitDistance;
             // liscio (specchio/vetro/metallo) -> view-dependent -> trust basso.
             // ruvido (>0.5) -> diffuso -> trust pieno.
-            trust = smoothstep(0.0, 0.5, aovMat.Roughness);
+            trust = smoothstep(0.0, 0.5, SampleRoughness(aovMat, aovHit.UV, 0.0));
         }
     } else {
         // imgAlbedo non e' ping-pong: contiene ancora il frame scorso (rgb + trust in alpha).
