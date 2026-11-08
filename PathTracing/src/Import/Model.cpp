@@ -279,6 +279,9 @@ namespace Lucerna {
 					while (ss >> token) last = token;
 					if (last.empty())
 						continue;
+					// MTL esportati su Windows (Bistro) scrivono "..\Textures\x.png": su Linux il
+					// backslash non separa le cartelle, quindi si normalizza sempre a "/"
+					std::replace(last.begin(), last.end(), '\\', '/');
 					std::string& target = (prefix == "map_Kd") ? m.map_Kd : (prefix == "map_d") ? m.map_d : m.map_Bump;
 					// se un materiale ne ha piu' d'uno, vince il primo
 					if (prefix == "map_Kd" || target.empty())

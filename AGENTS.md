@@ -18,7 +18,7 @@
 ## Run/Runtime Gotchas
 - The project is called Lucerna: the CMake project, the executable and the C++ namespace are `Lucerna`, while the repo folders and the `PT_*` variables keep their old names.
 - The executable is emitted to `PathTracing/build/bin/Lucerna` and the SPIR-V to `PathTracing/build/shaders/`; GLSL sources are in `PathTracing/shaders/`. Run it from any folder: it finds `PathTracing/res` through a path CMake bakes in (override with `LUCERNA_RESOURCES`).
-- Asset paths are relative to `res` (`models/bunny.obj`, `textures/...`): `Main.cpp` changes directory into it. Window layout and preferences live in `~/.config/lucerna`. Sponza is not in the repo: `PathTracing/tools/fetch_assets.sh` downloads it.
+- Asset paths are relative to `res` (`models/bunny.obj`, `textures/...`): `Main.cpp` changes directory into it. Window layout and preferences live in `~/.config/lucerna`. The models of built-in scenes 08-13 (Sponza, DamagedHelmet, MetalRoughSpheres, Breakfast Room, Bistro, Zero-Day) are not in the repo: `PathTracing/tools/fetch_assets.sh` downloads them.
 - The app requires Vulkan 1.3 and a GPU with `VK_KHR_ray_query`, `VK_KHR_acceleration_structure` and `VK_KHR_push_descriptor`. Building needs `glslc`.
 
 ## Real Entry Points

@@ -11,8 +11,15 @@ PathTracing/res/imgui.ini
 PathTracing/res/preferences.json
 
 # ---- asset grandi, non nel repo
-# (tools/fetch_assets.sh lo scarica)
+# (tools/fetch_assets.sh li scarica; crediti e licenze in res/models/CREDITS.md)
 PathTracing/res/models/Sponza/
+PathTracing/res/models/DamagedHelmet/
+PathTracing/res/models/MetalRoughSpheres/
+PathTracing/res/models/BreakfastRoom/
+PathTracing/res/models/Bistro/
+PathTracing/res/models/ZeroDay/
+# file temporanei degli script che rigenerano le scene
+PathTracing/res/scenes/tmp/
 
 # ---- file generati
 __pycache__/

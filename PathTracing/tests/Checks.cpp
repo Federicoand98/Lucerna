@@ -133,9 +133,10 @@ int main() {
 
 	// Scene integrate (issue #28): i file di res/scenes/builtin, per numero o per nome
 	const std::vector<BuiltinScene> builtin = ListBuiltinScenes("res/scenes/builtin");
-	CHECK(builtin.size() == 7 && builtin.front().Number == 0 && builtin.back().Number == 8);
+	CHECK(builtin.size() == 12 && builtin.front().Number == 0 && builtin.back().Number == 13);
 	CHECK(FindBuiltinScene(builtin, "6") != nullptr && FindBuiltinScene(builtin, "6")->Key == "setup-2");
-	CHECK(FindBuiltinScene(builtin, "sponza") == &builtin.back());
+	CHECK(FindBuiltinScene(builtin, "sponza") != nullptr && FindBuiltinScene(builtin, "sponza")->Number == 8);
+	CHECK(FindBuiltinScene(builtin, "zero-day") == &builtin.back());
 	CHECK(FindBuiltinScene(builtin, "4") != nullptr && FindBuiltinScene(builtin, "4")->DisplayName == "Cornell Box Meshes");
 	CHECK(FindBuiltinScene(builtin, "1") == nullptr && FindBuiltinScene(builtin, "") == nullptr);  // le scene casuali non ci sono piu'
 

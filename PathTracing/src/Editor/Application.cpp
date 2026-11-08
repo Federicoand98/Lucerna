@@ -118,6 +118,14 @@ namespace Lucerna {
 		// Test/CI headless: PT_DENOISE=1 accende il denoiser (misura del suo costo).
 		if (const char* dn = getenv("PT_DENOISE"))
 			m_Renderer.Settings.Denoise = (atoi(dn) != 0);
+
+		// PT_SAVE_SCENE=<file.json>: salva come file di scena quello che le variabili sopra hanno
+		// aperto e impostato. Cosi' si genera una scena integrata da un modello importato, da script.
+		if (const char* save = getenv("PT_SAVE_SCENE")) {
+			const std::string path = FromLaunchDirectory(save, false);
+			if (!m_Document.SaveAs(path, m_Scene, m_Assets, m_Renderer.Settings))
+				std::cerr << "PT_SAVE_SCENE: impossibile salvare " << path << std::endl;
+		}
 	}
 
 	Application::~Application() {

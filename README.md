@@ -157,7 +157,7 @@ The build is tested on Linux (GCC) and on Windows (MSVC).
    cmake --build PathTracing/build --config Release
    ```
    On Windows `PathTracing\build.ps1` does the same with the CMake that comes with Visual Studio.
-3. Download the large models that aren't in the repository (Sponza, about 110 MB)
+3. Download the large models that aren't in the repository: Sponza, DamagedHelmet, MetalRoughSpheres, Breakfast Room, Amazon Lumberyard Bistro and Beeple's Zero-Day (about 2.7 GB in all). Pass names to fetch only some, for example `fetch_assets.sh sponza helmet`. Zero-Day is converted from FBX, so it also needs Blender and Python with Pillow and numpy. Credits and licenses are in [`res/models/CREDITS.md`](PathTracing/res/models/CREDITS.md)
    ```sh
    PathTracing/tools/fetch_assets.sh     # Linux, or Git Bash on Windows
    PathTracing\tools\fetch_assets.ps1    # Windows PowerShell
