@@ -56,12 +56,23 @@ namespace Lucerna {
 	}
 
 	inline std::filesystem::path HomeDirectory() {
+#ifdef _WIN32
+		// Prima USERPROFILE: HOME su Windows lo mette solo Git Bash/MSYS, e non sempre uguale
+		if (const char* profile = std::getenv("USERPROFILE"))
+			return profile;
+#endif
 		if (const char* home = std::getenv("HOME"))
 			return home;
 		if (const char* profile = std::getenv("USERPROFILE"))
 			return profile;
 		return std::filesystem::current_path();
 	}
+
+#ifdef _WIN32
+	// La cartella Immagini di Windows, anche se spostata (OneDrive): Paths.cpp, per non portare
+	// windows.h in ogni file che include questo header. Vuota se Windows non la conosce.
+	std::filesystem::path WindowsPicturesDirectory();
+#endif
 
 	// Lo stato dell'utente (layout delle finestre, preferenze): ~/.config/lucerna, o
 	// %APPDATA%\Lucerna su Windows. Non sta ne' nel repo ne' accanto ai dati.
@@ -76,10 +87,14 @@ namespace Lucerna {
 	}
 
 	// Gli screenshot: la cartella Immagini dell'utente, piu' Lucerna. Su Linux il suo nome
-	// dipende dalla lingua ("Immagini"): lo dice ~/.config/user-dirs.dirs.
+	// dipende dalla lingua ("Immagini"): lo dice ~/.config/user-dirs.dirs. Su Windows la chiede
+	// alla shell.
 	inline std::filesystem::path UserPicturesDirectory() {
 		std::filesystem::path pictures = HomeDirectory() / "Pictures";
-#ifndef _WIN32
+#ifdef _WIN32
+		if (std::filesystem::path known = WindowsPicturesDirectory(); !known.empty())
+			pictures = known;
+#else
 		const char* config = std::getenv("XDG_CONFIG_HOME");
 		std::ifstream dirs((config && *config ? std::filesystem::path(config) : HomeDirectory() / ".config") / "user-dirs.dirs");
 		for (std::string line; std::getline(dirs, line);) {

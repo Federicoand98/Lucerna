@@ -26,7 +26,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # L'eseguibile e' output del build: sta in build/bin, non in res. Trova i suoi dati dai path
 # che CMake gli scrive dentro (LUCERNA_RESOURCES e LUCERNA_SHADERS li sovrascrivono a runtime).
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+# "$<0:>" e' un'espressione vuota: basta a impedire ai generatori multi-config (Visual Studio)
+# di aggiungere la sottocartella Release/Debug, cosi' i path sono gli stessi su ogni piattaforma.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/$<0:>)
 add_compile_definitions(LUCERNA_RESOURCE_DIR="${RES_DIR}" LUCERNA_SHADER_DIR="${SPV_DIR}")
 
 # Windows: windows.h (incluso da portable-file-dialogs e GLFW) definisce le macro min/max, che
@@ -122,7 +124,11 @@ add_custom_target(ModuleCheck
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_modules.py ${SRC_DIR} ${CMAKE_BINARY_DIR}/modules.txt
   COMMENT "Controllo delle dipendenze fra moduli")
 
-lucerna_module(Core)
+if(WIN32)
+  lucerna_module(Core LIBS shell32 ole32) # SHGetKnownFolderPath, per la cartella Immagini
+else()
+  lucerna_module(Core)
+endif()
 lucerna_module(Assets        DEPS Core)
 lucerna_module(Scene         DEPS Core Assets)
 lucerna_module(Import        DEPS Core Assets Scene LIBS cgltf)
@@ -140,7 +146,7 @@ add_executable(${PROJECT_NAME} "${SRC_DIR}/Main.cpp")
 # Document.cpp non usa ImGui: si prova senza linkare l'Editor
 add_executable(LucernaChecks "${CMAKE_CURRENT_SOURCE_DIR}/tests/Checks.cpp" "${SRC_DIR}/Editor/Document.cpp")
 target_link_libraries(LucernaChecks PRIVATE LucernaScene LucernaImport LucernaSerialization)
-set_target_properties(LucernaChecks PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+set_target_properties(LucernaChecks PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<0:>)
 target_link_libraries(${PROJECT_NAME} PRIVATE LucernaEditor)
 
 # Shader: SPIR-V generato a build time. glslc risolve da se' gli #include, quindi un compute

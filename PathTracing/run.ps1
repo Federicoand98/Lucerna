@@ -6,5 +6,5 @@ $ErrorActionPreference = "Stop"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "Running the project..."
-# Il generatore di Visual Studio e' multi-config: l'eseguibile sta in build\bin\<Config>
-& "$PSScriptRoot\build\bin\$Config\Lucerna.exe"
+# Lo stesso path di Linux: CMake toglie la sottocartella per configurazione anche con Visual Studio
+& "$PSScriptRoot\build\bin\Lucerna.exe"

@@ -21,7 +21,7 @@ TOP_LEVEL = {"Main.cpp", "ptpch.h"}
 def main() -> int:
     src = pathlib.Path(sys.argv[1])
     deps = {}
-    for line in pathlib.Path(sys.argv[2]).read_text().splitlines():
+    for line in pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
         if ":" in line:
             name, rest = line.split(":", 1)
             deps[name.strip()] = set(rest.replace(";", " ").split())  # CMake separa le liste con ;
@@ -35,7 +35,7 @@ def main() -> int:
         for f in sorted((src / module).rglob("*")):
             if f.suffix not in (".h", ".cpp"):
                 continue
-            for n, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
+            for n, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 m = INCLUDE.match(line)
                 if not m:
                     continue

@@ -1,0 +1,4 @@
+# Gli script bash devono avere LF anche su Windows (core.autocrlf=true li convertirebbe in CRLF,
+# e bash non li esegue piu': "set: pipefail\r: invalid option name"). Gli script PowerShell CRLF.
+*.sh    text eol=lf
+*.ps1   text eol=crlf

@@ -129,31 +129,38 @@ Lucerna currently has:
 
 * A GPU and driver with Vulkan 1.3, `VK_KHR_ray_query`, `VK_KHR_acceleration_structure` and `VK_KHR_push_descriptor`
 * CMake 3.8 or newer and a C++20 compiler
-* The Vulkan headers and loader, `glslc` and GLFW 3
+* The Vulkan headers and loader, and `glslc`
+* Python 3 and Git (GLFW is built from a submodule, with a small patch applied at configure time)
 
 On Ubuntu:
 
 ```sh
-sudo apt install build-essential cmake libvulkan-dev glslc libglfw3-dev
+sudo apt install build-essential cmake libvulkan-dev glslc python3 \
+  libwayland-dev wayland-protocols libxkbcommon-dev \
+  libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 ```
 
-The build has been tested on Linux only.
+On Windows: [Visual Studio 2022](https://visualstudio.microsoft.com/) with the "Desktop development with C++" workload (it ships CMake), the [Vulkan SDK](https://vulkan.lunarg.com/) (it ships `glslc`), Python 3 and Git.
+
+The build is tested on Linux (GCC) and on Windows (MSVC).
 
 ### Installation
 
-1. Clone the repo
+1. Clone the repo with its submodules
    ```sh
-   git clone https://github.com/Federicoand98/Lucerna.git
+   git clone --recursive https://github.com/Federicoand98/Lucerna.git
    cd Lucerna
    ```
 2. Build. The shaders are compiled to SPIR-V as part of the build
    ```sh
    cmake -S PathTracing -B PathTracing/build
-   cmake --build PathTracing/build
+   cmake --build PathTracing/build --config Release
    ```
+   On Windows `PathTracing\build.ps1` does the same with the CMake that comes with Visual Studio.
 3. Download the large models that aren't in the repository (Sponza, about 110 MB)
    ```sh
-   PathTracing/tools/fetch_assets.sh
+   PathTracing/tools/fetch_assets.sh     # Linux, or Git Bash on Windows
+   PathTracing\tools\fetch_assets.ps1    # Windows PowerShell
    ```
 4. Run. The executable is written to `PathTracing/build/bin` and finds its data on its own
    ```sh

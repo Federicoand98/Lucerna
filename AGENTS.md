@@ -7,6 +7,7 @@
 ## Verified Build Commands
 - Linux/default local build: `cmake -S PathTracing -B PathTracing/build && cmake --build PathTracing/build`
 - Repo-provided helper does the same thing from `PathTracing/`: `./build.sh`
+- Windows (Visual Studio 2022 + Vulkan SDK): `.\build.ps1` / `.\run.ps1` from `PathTracing/`, which pick the CMake bundled with Visual Studio (an older one on PATH may not know VS 2022). The generator is multi-config, but outputs land in the same places as on Linux (`build/bin/Lucerna.exe`, `build/LucernaChecks.exe`): Debug and Release overwrite each other. `tools/fetch_assets.ps1` and `tools/render_check/capture.ps1` mirror the bash scripts, which also run from Git Bash (`.gitattributes` keeps `*.sh` at LF).
 - CI configures the nested project directly: `cmake -B $GITHUB_WORKSPACE/PathTracing/build -DCMAKE_BUILD_TYPE=Release` then `cmake --build ...`
 - The only test target is `LucernaChecks` (`tests/Checks.cpp`), CPU-only checks of Core and Scene logic: run `./build/LucernaChecks` from `PathTracing/`. There is no lint or typecheck target; rendering is verified with screenshots (see CLAUDE.md).
 
