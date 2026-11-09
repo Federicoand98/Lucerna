@@ -14,6 +14,7 @@
 #include "Render/Renderer.h"
 #include "Serialization/BuiltinScenes.h"
 #include "Editor/Document.h"
+#include "Editor/BlenderLink.h"
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
@@ -137,7 +138,11 @@ namespace Lucerna {
 		// Apre un file (rimpiazzando la scena) e registra path+mtime per il live-link;
 		// PollLiveLink controlla ogni frame se il file e' cambiato e in tal caso lo riapre.
 		// ---- documento (il menu File)
-		bool OpenDocument(const std::string& path);
+		bool OpenDocument(const std::string& path, bool remember = true); // remember: in Open Recent
+		// Blender (ADR 0024): lo lancia collegato, e ogni frame applica l'export nuovo
+		void OpenInBlender();
+		void PollBlender();
+		void DrawBlenderStatus(); // l'indicatore nella status bar
 		bool LoadBuiltinScene(int index);
 		void NewDocument();
 		bool SaveDocument();      // riscrive il file aperto, o chiede dove salvare
@@ -241,7 +246,11 @@ namespace Lucerna {
 		std::vector<BuiltinScene> m_BuiltinScenes;     // res/scenes/builtin (issue #28)
 		int m_CurrentScene = -1;                        // in m_BuiltinScenes, -1 = un file aperto o caricato
 		std::string m_WatchPath;                        // il file aperto, vuoto = nessuno
-		bool m_LiveLink = true;                         // riapre il file quando cambia
+		bool m_LiveLink = true;
+		BlenderLink m_Blender;
+		bool m_DocumentFromBlender = false; // il documento e' l'export di Blender: un sync lo sostituisce senza chiedere
+		std::string m_LinkedBlend;          // il .blend di quell'export: un altro .blend riprende la sua camera
+		std::string m_BlenderError;         // l'ultimo problema nel lanciarlo, mostrato nelle preferenze                         // riapre il file quando cambia
 		std::filesystem::file_time_type m_WatchMtime{}; // ultimo timestamp visto
 		bool m_IsRunning;
 		Preferences m_Preferences;

@@ -1,27 +1,25 @@
-# Live-link Blender → Path Tracer
+# Blender → Lucerna
 
-Sync a senso unico: **Blender esporta, il renderer legge**. Vedi [ADR 0003](../../docs/adr/0003-interop-blender-via-gltf.md).
+Sync a senso unico: **Blender esporta, Lucerna legge**. Vedi [ADR 0003](../../docs/adr/0003-interop-blender-via-gltf.md) e [ADR 0024](../../docs/adr/0024-blender-avviato-da-lucerna.md).
 
-## Setup (una volta)
+## Uso
 
-1. Blender → *Edit > Preferences > Add-ons > Install…* → scegli [`pt_livelink.py`](pt_livelink.py) → abilita **Path Tracer Live-Link**.
-2. **Salva il `.blend`** almeno una volta: l'export ha bisogno di sapere dove sta il file.
-3. Nella *Sidebar* del viewport (tasto `N`) → tab **Path Tracer** → premi **Esporta glTF ora** (o salva di nuovo).
+1. In Lucerna: **File > Open in Blender…**. Lucerna lancia Blender con [`lucerna_link.py`](lucerna_link.py) caricato solo per quella sessione: non c'è niente da installare.
+2. In Blender apri qualsiasi `.blend`. All'apertura, a ogni salvataggio (`Ctrl+S`) e con **Sync now** (sidebar `N` > tab **Lucerna**, o l'indicatore nella status bar di Lucerna) la scena si esporta in `<cartella del .blend>/lucerna_live/scene.gltf` e Lucerna la apre.
+3. La status bar di Lucerna mostra lo stato: in attesa di un `.blend`, collegato (con l'ultimo sync), Blender chiuso. Cliccandola: Sync now, Show export folder, Disconnect.
 
-L'export finisce in `<cartella-del-blend>/pt_live/scene.gltf`.
+Il primo sync di un `.blend` prende la camera attiva di Blender; i successivi tengono l'inquadratura di Lucerna. Le modifiche fatte in Lucerna a una scena di Blender si perdono al sync successivo: il viewport lo segnala quando ce ne sono.
 
-## Uso quotidiano
+## Il path di Blender
 
-1. Nel renderer: incolla il path di `pt_live/scene.gltf` nel campo **glTF path** → **Load glTF**. Lascia **Live-link** attivo.
-2. In Blender: lavora e **salva** (`Ctrl+S`). L'addon riesporta, il renderer se ne accorge (osserva l'mtime del file) e ricarica da solo.
+**Edit > Preferences > Blender**. Vuoto, Lucerna lo cerca: nel `PATH`, in `/usr/bin`, `/snap/bin`, nei `bin` di flatpak, in `/opt/blender*` e `~/Applications/blender*`; su Windows in `Program Files/Blender Foundation/Blender *`.
 
-## Cosa passa e cosa no
+## Come si parlano
 
-**Passa:** mesh (triangoli, normali, UV), transform dei nodi, materiali Principled BSDF nel sottoinsieme mappabile (base color + texture, metallic, roughness, IOR, transmission, emissione).
+Lucerna passa all'addon il path di un manifest (`--lucerna-manifest`, un JSON nella cartella temporanea, uno per processo di Lucerna). Dopo ogni export completo l'addon lo riscrive con una rename atomica, così Lucerna non legge mai un glTF a metà. Sync now in Lucerna crea `<manifest>.request`, che l'addon controlla ogni mezzo secondo. Il formato è descritto in testa a `lucerna_link.py`.
 
-**Non passa (ancora):** luci, camera, node graph procedurali, subsurface/coat/sheen/anisotropy. Senza luci importate la scena è illuminata da un cielo di default. È il "dove c'è matching" previsto dall'ADR 0003.
+## Cosa passa
 
-## Note
+Mesh (triangoli, normali, UV), transform, materiali Principled BSDF nel sottoinsieme che il BSDF di Lucerna rappresenta (base color e texture, metallic, roughness, IOR, transmission, emissione, normal map, alpha), luci punto, spot e sole (`KHR_lights_punctual`, ADR 0009), la camera attiva. Node graph procedurali, subsurface, coat, sheen e anisotropy non passano.
 
-- L'export è **GLTF_SEPARATE** (`.gltf` + `.bin` + PNG): il renderer carica le texture da file, non da un `.glb` con immagini embedded.
-- Se salvi mentre il renderer sta leggendo un file a metà scrittura, il parse fallisce e la scena resta com'è: al salvataggio successivo si riallinea.
+L'export è `GLTF_SEPARATE` (`.gltf` + `.bin` + texture): Lucerna carica le texture da file.

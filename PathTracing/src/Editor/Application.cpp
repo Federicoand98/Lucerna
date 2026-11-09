@@ -270,8 +270,9 @@ namespace Lucerna {
 				SyncCameras(cameraMoved);
 				m_Renderer.SetInteracting(cameraMoved);
 
-				// Live-link glTF: ricarica la scena se il file e' stato ri-esportato da Blender.
+				// Live-link: un file importato cambiato sul disco, o un export nuovo di Blender
 				PollLiveLink();
+				PollBlender();
 
 				if (m_RescaleRequested)
 					RebuildUiForScale();
@@ -414,8 +415,9 @@ namespace Lucerna {
 	// Apre un file come documento: un .json e' una scena, ogni altro formato passa dagli importer
 	// (issue #27). Se il file non si legge scena e documento restano come erano. Un file importato
 	// si sorveglia per il live-link: da qui in poi PollLiveLink lo riapre quando cambia.
-	bool Application::OpenDocument(const std::string& path) {
+	bool Application::OpenDocument(const std::string& path, bool remember) {
 		m_Selection = {};
+		m_DocumentFromBlender = false;
 		Profiler::Get().BeginLoad(path);
 		if (!m_Document.Open(path, m_Scene, m_Assets, m_Renderer.Settings)) {
 			Profiler::Get().CancelLoad();
@@ -429,7 +431,8 @@ namespace Lucerna {
 			std::error_code ec;
 			m_WatchMtime = std::filesystem::last_write_time(m_WatchPath, ec); // ec ignorato: se fallisce, 0 -> ricarica al primo poll
 		}
-		RememberRecent(m_Document.Path());
+		if (remember)
+			RememberRecent(m_Document.Path());
 		return true;
 	}
 
@@ -446,6 +449,7 @@ namespace Lucerna {
 	// in questo stesso frame e userebbe gli indici della scena vecchia.
 	bool Application::LoadBuiltinScene(int index) {
 		m_Selection = {};
+		m_DocumentFromBlender = false;
 		Profiler::Get().BeginLoad(m_BuiltinScenes[index].Path);
 		if (!m_Document.OpenBuiltin(m_BuiltinScenes[index], m_Scene, m_Assets, m_Renderer.Settings)) {
 			Profiler::Get().CancelLoad();
@@ -458,6 +462,7 @@ namespace Lucerna {
 
 	void Application::NewDocument() {
 		m_Selection = {};
+		m_DocumentFromBlender = false;
 		m_Document.New(m_Scene, m_Assets, m_Renderer.Settings);
 		m_CurrentScene = -1;
 		m_WatchPath.clear();
@@ -556,6 +561,9 @@ namespace Lucerna {
 				WhenSaved([this] { NewDocument(); });
 			if (ImGui::MenuItem(ICON_OPEN " Open...", "Ctrl+O"))
 				ShowOpenDialog();
+			// Blender parte collegato: il .blend si apre li', e la scena arriva qui (ADR 0024)
+			if (ImGui::MenuItem(ICON_EXTERNAL " Open in Blender..."))
+				OpenInBlender();
 			if (ImGui::BeginMenu("Open Recent")) {
 				// un file che non c'e' piu' sparisce dall'elenco
 				std::vector<std::string>& recent = m_Preferences.RecentFiles;
@@ -583,8 +591,8 @@ namespace Lucerna {
 			if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
 				SaveDocumentAs();
 			ImGui::Separator();
-			// il live-link riapre il file importato quando Blender lo riesporta (ADR 0003)
-			if (ImGui::MenuItem("Live-link", nullptr, &m_LiveLink, !m_WatchPath.empty())) {}
+			// un file importato si riapre quando cambia sul disco (un export di un altro tool)
+			if (ImGui::MenuItem("Reload when the file changes", nullptr, &m_LiveLink, !m_WatchPath.empty())) {}
 			if (ImGui::MenuItem(ICON_SCREENSHOT " Save screenshot"))
 				m_ScreenshotRequested = true;
 			ImGui::Separator();
@@ -642,6 +650,87 @@ namespace Lucerna {
 		filters.push_back("All files");
 		filters.push_back("*");
 		return filters;
+	}
+
+	// File > Open in Blender (ADR 0024). Senza un Blender da lanciare si aprono le preferenze sul
+	// suo campo, con il motivo.
+	void Application::OpenInBlender() {
+		m_BlenderError.clear();
+		const std::string blender = BlenderLink::FindBlender(m_Preferences.BlenderPath);
+		if (blender.empty())
+			m_BlenderError = m_Preferences.BlenderPath.empty() ? "Blender was not found: set its executable here."
+			                                                   : "This is not an executable: " + m_Preferences.BlenderPath;
+		else
+			m_Blender.Launch(blender, m_BlenderError);
+		if (!m_BlenderError.empty())
+			m_ShowPreferences = true;
+	}
+
+	// Un export nuovo di Blender diventa il documento. Il primo di un .blend prende la sua camera;
+	// i successivi tengono l'inquadratura di Lucerna. Sostituire una scena che non viene da Blender
+	// chiede di salvare; un sync della scena gia' collegata no: le sue modifiche si sapeva che
+	// sarebbero state sostituite.
+	void Application::PollBlender() {
+		const std::optional<BlenderLink::Sync> sync = m_Blender.Poll();
+		if (!sync)
+			return;
+		std::cout << "Blender: sync " << sync->Number << " of " << sync->Blend << " (" << sync->ExportMs << " ms export)" << std::endl;
+		auto apply = [this, gltf = sync->Gltf, blend = sync->Blend] {
+			const bool sameBlend = m_DocumentFromBlender && blend == m_LinkedBlend;
+			const SceneCamera shot = m_Scene.Camera();
+			if (!OpenDocument(gltf, false))
+				return;
+			m_WatchPath.clear(); // lo guida il manifest, non l'mtime del glTF
+			if (sameBlend)
+				m_Scene.MoveCamera(shot.Position, shot.Direction); // navigazione: non e' una modifica
+			m_DocumentFromBlender = true;
+			m_LinkedBlend = blend;
+		};
+		if (m_DocumentFromBlender)
+			apply();
+		else
+			WhenSaved(apply);
+	}
+
+	// L'indicatore nella status bar: lo stato del collegamento, e un menu con Sync now
+	void Application::DrawBlenderStatus() {
+		using State = BlenderLink::State;
+		const State state = m_Blender.GetState();
+		if (state == State::Off)
+			return;
+		std::string text = ICON_LINK " Blender";
+		ImVec4 color = Theme::TextDim;
+		switch (state) {
+		case State::Starting: text += "  starting..."; color = Theme::Accent; break;
+		case State::Unsaved: text += "  open or save a .blend"; color = Theme::Accent; break;
+		case State::Linked: {
+			text += "  " + std::filesystem::path(m_Blender.Blend()).filename().string();
+			const double seconds = m_Blender.SecondsSinceSync();
+			char ago[48];
+			if (seconds < 60.0) snprintf(ago, sizeof(ago), "  synced %.0f s ago", seconds);
+			else snprintf(ago, sizeof(ago), "  synced %.0f min ago", seconds / 60.0);
+			text += ago;
+			color = Theme::Rgb(0x6fd6b8);
+			break;
+		}
+		case State::Closed: text += "  closed"; break;
+		default: break;
+		}
+		ImGui::PushStyleColor(ImGuiCol_Text, color);
+		if (ImGui::Selectable(text.c_str(), false, ImGuiSelectableFlags_DontClosePopups, ImVec2(ImGui::CalcTextSize(text.c_str()).x, 0.0f)))
+			ImGui::OpenPopup("##blender");
+		ImGui::PopStyleColor();
+		if (ImGui::BeginPopup("##blender")) {
+			if (state == State::Linked)
+				ImGui::TextDisabled("%s \xc2\xb7 export %.0f ms", m_Blender.Blend().c_str(), m_Blender.LastExportMs());
+			if (ImGui::MenuItem(ICON_REFRESH " Sync now", nullptr, false, m_Blender.CanSync()))
+				m_Blender.RequestSync();
+			if (ImGui::MenuItem(ICON_FOLDER " Show export folder", nullptr, false, !m_Blender.Gltf().empty()))
+				BlenderLink::ShowInFileManager(std::filesystem::path(m_Blender.Gltf()).parent_path());
+			if (ImGui::MenuItem(ICON_UNLINK " Disconnect"))
+				m_Blender.Disconnect();
+			ImGui::EndPopup();
+		}
 	}
 
 	// Live-link: se il file aperto e' cambiato (Blender l'ha ri-esportato su save), lo riapre.

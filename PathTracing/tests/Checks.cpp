@@ -8,6 +8,7 @@
 #include "Serialization/BuiltinScenes.h"
 #include "Serialization/SceneSerializer.h"
 #include "Editor/Document.h"
+#include "Editor/BlenderLink.h"
 #include "Core/Paths.h"
 #include "Core/Parallel.h"
 #include "Core/Profiler.h"
@@ -15,6 +16,8 @@
 #include <cstdio>
 #include <algorithm>
 #include <atomic>
+#include <fstream>
+#include <filesystem>
 #include <chrono>
 #include <thread>
 #include <unordered_set>
@@ -172,6 +175,52 @@ int main() {
 		CHECK(!profiler.FramePresented() && profiler.LastLoad().Label == "scene.json");
 		profiler.Reset();
 	}
+
+#ifndef _WIN32
+	// Il collegamento con Blender (ADR 0024): un finto Blender che dorme, e i manifest scritti
+	// come li scrive l'addon (rename atomica)
+	{
+		namespace fs = std::filesystem;
+		CHECK(BlenderLink::FindBlender("/bin/sh") == "/bin/sh");
+		CHECK(BlenderLink::FindBlender("/no/such/blender").empty());
+		setenv("LUCERNA_RESOURCES", (fs::current_path() / "res").c_str(), 1);
+		CHECK(fs::exists(BlenderLink::ScriptPath()));
+
+		const fs::path dir = fs::temp_directory_path() / "lucerna-checks-link";
+		fs::create_directories(dir);
+		const fs::path fake = dir / "fake-blender";
+		std::ofstream(fake) << "#!/bin/sh\nsleep 3\n";
+		fs::permissions(fake, fs::perms::owner_all);
+		const fs::path manifest = dir / "link.json";
+		auto write = [&](const std::string& json) {
+			std::ofstream(manifest.string() + ".tmp") << json;
+			fs::rename(manifest.string() + ".tmp", manifest);
+			std::this_thread::sleep_for(std::chrono::milliseconds(300)); // oltre ManifestPollSeconds: l'mtime puo' non cambiare
+		};
+
+		BlenderLink link(manifest);
+		CHECK(link.GetState() == BlenderLink::State::Off && !link.Poll());
+		std::string error;
+		CHECK(link.Launch(fake.string(), error) && error.empty());
+		CHECK(!link.Poll() && link.GetState() == BlenderLink::State::Starting);
+		write(R"({"version": 1, "sync": 0, "status": "unsaved"})");
+		CHECK(!link.Poll() && link.GetState() == BlenderLink::State::Unsaved && link.CanSync());
+		write(R"({"version": 1, "sync": 1, "status": "exported", "blend": "/a/room.blend", "gltf": "/a/lucerna_live/scene.gltf", "exportMs": 40})");
+		const auto first = link.Poll();
+		CHECK(first && first->Number == 1 && first->Blend == "/a/room.blend" && link.GetState() == BlenderLink::State::Linked);
+		CHECK(!link.Poll()); // lo stesso export non si applica due volte
+		write(R"({"version": 2, "sync": 2, "status": "exported"})"); // un formato che non si conosce si ignora
+		CHECK(!link.Poll());
+		write(R"({"version": 1, "sync": 3, "status": "exported", "blend": "/a/hall.blend", "gltf": "/a/x.gltf"})");
+		const auto second = link.Poll();
+		CHECK(second && second->Number == 3 && second->Blend == "/a/hall.blend");
+		link.RequestSync();
+		CHECK(fs::exists(manifest.string() + ".request"));
+		link.Disconnect();
+		CHECK(link.GetState() == BlenderLink::State::Off && !link.Poll());
+		fs::remove_all(dir);
+	}
+#endif
 
 	// Nomi unici come in Blender
 	ObjectList<Thing> list("Thing");

@@ -55,5 +55,10 @@
 #define ICON_RESTORE        "\xee\x82\xa2" // copy
 #define ICON_PROFILER       "\xee\x8a\xa5" // chart-line
 #define ICON_ZAP            "\xee\x86\xb4" // zap
+#define ICON_EXTERNAL       "\xee\x82\xbd" // external-link
+#define ICON_LINK           "\xee\x84\x88" // link
+#define ICON_UNLINK         "\xee\x86\x9c" // unlink
+#define ICON_REFRESH        "\xee\x85\x89" // refresh-cw
+#define ICON_FOLDER         "\xee\x83\x9c" // folder
 
 #endif // EDITOR_ICONS_H

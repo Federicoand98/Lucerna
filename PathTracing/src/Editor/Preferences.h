@@ -19,6 +19,8 @@ namespace Lucerna {
 		bool SystemTitleBar = false;
 		// I file aperti o salvati di recente, il piu' recente per primo (Open Recent)
 		std::vector<std::string> RecentFiles;
+		// L'eseguibile di Blender per File > Open in Blender (ADR 0024); vuoto = lo cerca Lucerna
+		std::string BlenderPath;
 		void AddRecent(const std::string& path); // in testa, senza doppioni, al massimo MAX_RECENT
 		static constexpr size_t MAX_RECENT = 10;
 
@@ -28,7 +30,8 @@ namespace Lucerna {
 	};
 
 	constexpr auto JsonFields(const Preferences*) {
-		return std::make_tuple(Field("vsync", &Preferences::Vsync), Field("systemTitleBar", &Preferences::SystemTitleBar), Field("recentFiles", &Preferences::RecentFiles));
+		return std::make_tuple(Field("vsync", &Preferences::Vsync), Field("systemTitleBar", &Preferences::SystemTitleBar), Field("recentFiles", &Preferences::RecentFiles),
+		                       Field("blenderPath", &Preferences::BlenderPath));
 	}
 }
 

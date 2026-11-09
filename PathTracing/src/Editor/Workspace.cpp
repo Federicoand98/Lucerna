@@ -7,6 +7,7 @@
 #include "Editor/Icons.h"
 #include "Editor/Widgets.h"
 #include "Core/Profiler.h"
+#include "vendor/portable-file-dialogs.h"
 
 #include "imgui_internal.h"
 #include "imgui_impl_vulkan.h"
@@ -88,6 +89,8 @@ namespace Lucerna {
 					ImGui::Text("1 selected: %s", GetSelectionName().c_str());
 				else
 					ImGui::TextUnformatted("Nothing selected");
+				ImGui::Spacing();
+				DrawBlenderStatus();
 
 				const std::string device = std::string("Vulkan 1.3  ray query  ") + m_Vulkan.DeviceName();
 				ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(device.c_str()).x - ImGui::GetStyle().WindowPadding.x * 2);
@@ -210,6 +213,35 @@ namespace Lucerna {
 			}
 			UI::Label("Device");
 			ImGui::TextDisabled("%s", m_Vulkan.DeviceName());
+
+			// File > Open in Blender (ADR 0024): vuoto = Lucerna lo cerca da se'
+			ImGui::Spacing();
+			char blender[1024];
+			snprintf(blender, sizeof(blender), "%s", m_Preferences.BlenderPath.c_str());
+			if (UI::InputText("Blender", blender, sizeof(blender))) {
+				m_Preferences.BlenderPath = blender;
+				m_Preferences.Save();
+			}
+			UI::Label("");
+			if (UI::Pill(ICON_OPEN " Browse...")) {
+				const auto chosen = pfd::open_file("Blender executable", m_Preferences.BlenderPath).result();
+				if (!chosen.empty()) {
+					m_Preferences.BlenderPath = chosen.front();
+					m_Preferences.Save();
+					m_BlenderError.clear();
+				}
+			}
+			if (m_Preferences.BlenderPath.empty()) {
+				const std::string found = BlenderLink::FindBlender("");
+				UI::Label("");
+				ImGui::TextDisabled(found.empty() ? "not found: set the executable" : "found: %s", found.c_str());
+			}
+			if (!m_BlenderError.empty()) {
+				UI::Label("");
+				ImGui::PushTextWrapPos(0.0f);
+				ImGui::TextColored(Theme::Accent, "%s", m_BlenderError.c_str());
+				ImGui::PopTextWrapPos();
+			}
 		}
 		ImGui::End();
 	}
@@ -437,6 +469,12 @@ namespace Lucerna {
 			const char* mode = EffectiveGizmoOperation() == ImGuizmo::ROTATE ? "Rotate" : EffectiveGizmoOperation() == ImGuizmo::SCALE ? "Scale" : "Move";
 			const std::string label = GetSelectionName() + "  " + mode;
 			HudLabel(list, topLeft, 1.0f, label.c_str(), ImGui::GetColorU32(Theme::Accent));
+		}
+		// una scena che arriva da Blender si sostituisce al prossimo sync: lo si dice solo quando
+		// c'e' qualcosa da perdere (ADR 0024)
+		if (m_DocumentFromBlender && m_Document.IsModified(m_Scene, m_Assets, m_Renderer.Settings)) {
+			const ImVec2 at(topLeft.x, topLeft.y + (m_Selection.IsValid() ? lineStep : 0.0f));
+			HudLabel(list, at, 1.0f, ICON_LINK " Live from Blender: edits here are replaced on the next sync", ImGui::GetColorU32(Theme::TextDim));
 		}
 		if (!m_ShowHud)
 			return;
