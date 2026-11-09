@@ -1369,7 +1369,6 @@ STBIDEF stbi_uc* stbi_load(char const* filename, int* x, int* y, int* comp, int 
         return stbi__errpuc("can't fopen", "Unable to open file");
     }
     result = stbi_load_from_file(f, x, y, comp, req_comp);
-    printf("result: %p\n", result);
     fclose(f);
     return result;
 }

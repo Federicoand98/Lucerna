@@ -56,6 +56,7 @@ namespace Lucerna {
 		// Distrugge qualcosa dopo la fine del frame in corso: i comandi gia' registrati (o le
 		// draw list di ImGui) possono ancora riferirlo.
 		void Defer(std::function<void()> destroy) { m_Deferred.push_back(std::move(destroy)); }
+		void FlushDeferred(); // solo a GPU ferma: BeginFrame dopo la fence, o allo spegnimento
 
 		// Esegue comandi su un command buffer proprio e aspetta che finiscano.
 		void Immediate(const std::function<void(VkCommandBuffer)>& record);

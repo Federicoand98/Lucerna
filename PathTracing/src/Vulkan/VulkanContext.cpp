@@ -340,9 +340,7 @@ namespace Lucerna {
 		vkWaitForFences(m_Device, 1, &m_FrameFence, VK_TRUE, UINT64_MAX);
 
 		// Il frame precedente e' finito: quello che aspettava questo momento si puo' distruggere.
-		for (const std::function<void()>& destroy : m_Deferred)
-			destroy();
-		m_Deferred.clear();
+		FlushDeferred();
 
 		int width = 0, height = 0;
 		glfwGetFramebufferSize(m_Window, &width, &height);
@@ -607,12 +605,16 @@ namespace Lucerna {
 		image = GpuImage{};
 	}
 
+	void VulkanContext::FlushDeferred() {
+		for (const std::function<void()>& destroy : m_Deferred)
+			destroy();
+		m_Deferred.clear();
+	}
+
 	void VulkanContext::Shutdown() {
 		if (m_Device != VK_NULL_HANDLE) {
 			vkDeviceWaitIdle(m_Device);
-			for (const std::function<void()>& destroy : m_Deferred)
-				destroy();
-			m_Deferred.clear();
+			FlushDeferred();
 
 			DestroySwapchainViews();
 			vkDestroySwapchainKHR(m_Device, m_Swapchain, nullptr);

@@ -637,6 +637,8 @@ namespace Lucerna {
 	void Application::Shutdown() {
 		if (m_Vulkan.Device() != VK_NULL_HANDLE) {
 			vkDeviceWaitIdle(m_Vulkan.Device());
+			// la coda puo' tenere set di ImGui (DisplayTexture): va svuotata prima del suo backend
+			m_Vulkan.FlushDeferred();
 			if (m_DisplaySet != VK_NULL_HANDLE)
 				ImGui_ImplVulkan_RemoveTexture(m_DisplaySet);
 			m_Renderer.Release();
