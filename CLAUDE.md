@@ -41,7 +41,8 @@ PT_NOVSYNC=1 PT_VIEWPORT=1280x720 PT_SCENE=6 PT_SHOT=shot.png PT_SHOT_FRAME=64 .
 | `PT_CAM=x,y,z,dx,dy,dz` | Camera position and view direction, for repeatable framings (Sponza's default camera sits in the dark arcade) |
 | `PT_AOV=<n>` | Start in a debug view: 1 albedo, 2 normal, 3 depth |
 | `PT_VALIDATION=1` | Enable the Vulkan validation layers in a Release build; errors print as `ERROR::VULKAN` |
-| `PT_LOG_FPS`, `PT_LIGHTS` | Log FPS with GPU pass times, or emitter counts, to stdout |
+| `PT_PROFILE=<file.json>` | At the end of the run, write the profiler summary: diagnosis, min/avg/p99/max of every GPU pass and CPU scope, rays, memory, the last load. The first 10 frames are skipped; compare two builds by diffing two files |
+| `PT_LIGHTS` | Log emitter counts to stdout |
 
 To see the whole UI rather than the render, run the app with `PT_PLATFORM=x11` so it runs under XWayland (Wayland has no way to capture another app's window from a script), find the window with `xwininfo -root -tree | grep '("Lucerna" "Lucerna")'`, and capture it with `import -window <id> out.png`.
 

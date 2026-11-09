@@ -15,6 +15,7 @@
 #include "Serialization/BuiltinScenes.h"
 #include "Editor/Document.h"
 #include <functional>
+#include <unordered_map>
 #include <unordered_set>
 #include "Editor/Camera.h"
 #include "ImGuizmo.h"
@@ -102,6 +103,9 @@ namespace Lucerna {
 		void DrawMemoryTab();
 		void DockProfilerUnderViewport(); // la prima volta, con un imgui.ini di prima del profiler
 		std::string ProfilerHudLine(bool& warn) const; // la diagnosi per l'HUD
+		void SaveProfilerReference(bool save);         // false = lo toglie
+		std::string ProfilerSummaryText() const;       // Copy summary
+		void WriteProfile(const std::string& path) const; // PT_PROFILE
 
 		void DrawSelectionProperties();
 		bool DrawMaterialEditor(Material& material, int index); // true = la copia e' cambiata
@@ -176,6 +180,9 @@ namespace Lucerna {
 		int m_ProfilerWindow = 1, m_ProfilerPinned = -1;
 		int m_ProfilerTab = 0; // 0 Frame, 1 Loading, 2 Memory
 		std::unordered_set<std::string> m_ProfilerCollapsed; // le righe chiuse della tabella CPU, per percorso
+		// Il riferimento A/B: la media di ogni riga quando lo si e' salvato; frame 0 = nessuno
+		std::unordered_map<std::string, float> m_ProfilerReference;
+		float m_ProfilerReferenceFrameMs = 0.0f;
 		bool m_HudClicked = false; // un clic sull'HUD apre il profiler e non fa picking
 		bool m_ResetLayout = false;
 		// Il materiale aperto nella sezione Material: quello cliccato nel pannello, o quello

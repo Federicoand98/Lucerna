@@ -342,7 +342,7 @@ namespace Lucerna {
 
 			{
 				PROFILE_SCOPE("Renderer");
-				m_Renderer.SetCountRays(m_ShowProfiler);
+				m_Renderer.SetCountRays(m_ShowProfiler || getenv("PT_PROFILE") != nullptr);
 				Render(m_DeltaTime);
 			}
 
@@ -380,6 +380,10 @@ namespace Lucerna {
 				HandleCaptures();
 			}
 		}
+
+		// PT_PROFILE=<file.json>: il riepilogo del profiler alla fine della run (issue #37)
+		if (const char* profile = getenv("PT_PROFILE"))
+			WriteProfile(FromLaunchDirectory(profile, false));
 	}
 
 	// Va dopo la submit: le immagini si leggono solo a frame eseguito.
@@ -668,9 +672,6 @@ namespace Lucerna {
 
 		if (m_Timer >= 1.0) {
 			m_FPS = (double)m_NFrames / m_Timer;
-			const FrameRecord& latest = Profiler::Get().Latest();
-			if (getenv("PT_LOG_FPS")) std::cout << "PTFPS " << m_FPS << " pt_ms " << latest.GpuMs("Path tracer")
-			                                    << " dn_ms " << latest.GpuMs("Denoiser") << std::endl; // TEMP: misura headless (#37)
 			m_NFrames = 0;
 			m_ResetTimer = time;
 		}

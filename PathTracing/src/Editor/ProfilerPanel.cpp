@@ -5,9 +5,11 @@
 #include "Editor/Icons.h"
 #include "Editor/Widgets.h"
 #include "Core/Profiler.h"
+#include <nlohmann/json.hpp>
 
 #include "imgui_internal.h"
 
+#include <fstream>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -189,6 +191,183 @@ namespace Lucerna {
 			ImGui::Dummy(ImVec2(size, ImGui::GetTextLineHeight()));
 			ImGui::SameLine(0.0f, 6.0f * UI::Scale());
 		}
+	}
+
+	namespace {
+		// Le chiavi del riferimento A/B: una passata GPU per nome e profondita', una riga CPU
+		// per il suo percorso
+		std::string GpuKey(const PassKey& key) { return "gpu/" + key.Name + "@" + std::to_string(key.Depth); }
+		std::string CpuKey(const CpuRow& row) { return "cpu/" + row.Key; }
+
+		struct StatRow {
+			std::string Key, Name;
+			int Depth = 0;
+			Summary Sum;
+		};
+
+		// Tutto quello che il pannello mostra di una finestra di frame, in una forma che si puo'
+		// salvare come riferimento, copiare o scrivere in JSON (issue #37)
+		struct ProfileStats {
+			size_t Frames = 0;
+			Diagnosis Diag;
+			std::vector<StatRow> Gpu, Cpu;
+			double Rays = 0.0, Pixels = 0.0, PathTracerMs = 0.0;
+			size_t CountedFrames = 0;
+			bool HasThroughput() const { return CountedFrames > 0 && PathTracerMs > 0.0; }
+			double MraysPerSecond() const { return Rays / PathTracerMs / 1000.0; }
+			double RaysPerFrame() const { return Rays / CountedFrames; }
+			double RaysPerPixel() const { return Rays / Pixels; }
+		};
+
+		ProfileStats ComputeStats(const std::vector<const FrameRecord*>& frames) {
+			ProfileStats stats;
+			stats.Frames = frames.size();
+			stats.Diag = Diagnose(frames);
+			for (const PassKey& key : PassKeys(frames)) {
+				std::vector<float> values;
+				for (const FrameRecord* f : frames)
+					values.push_back(PassMs(*f, key));
+				stats.Gpu.push_back({ GpuKey(key), key.Name, key.Depth, Summarize(values) });
+			}
+			const std::vector<CpuRow> rows = CpuRows(frames);
+			const std::vector<std::vector<float>> series = CpuSeries(rows, frames);
+			for (size_t r = 0; r < rows.size(); r++)
+				stats.Cpu.push_back({ CpuKey(rows[r]), rows[r].Name, rows[r].Depth, Summarize(series[r]) });
+			for (const FrameRecord* f : frames)
+				if (f->Rays > 0) {
+					stats.Rays += f->Rays;
+					stats.Pixels += f->Pixels;
+					stats.PathTracerMs += f->GpuMs("Path tracer");
+					stats.CountedFrames++;
+				}
+			return stats;
+		}
+
+		// La differenza col riferimento: arancio se piu' lento, blu se piu' veloce
+		void DeltaCell(const std::unordered_map<std::string, float>& reference, const std::string& key, float current) {
+			const auto found = reference.find(key);
+			const float delta = current - (found != reference.end() ? found->second : 0.0f);
+			char text[24];
+			if (std::abs(delta) < 0.005f)
+				snprintf(text, sizeof(text), "0.00");
+			else
+				snprintf(text, sizeof(text), "%s%.2f", delta > 0.0f ? "+" : "-", std::abs(delta));
+			const ImVec4 color = std::abs(delta) < 0.005f ? Theme::TextDim : delta > 0.0f ? Theme::Rgb(0xff9f80) : Theme::Rgb(0x8fc8ff);
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(text).x);
+			ImGui::TextColored(color, "%s", text);
+		}
+
+		const char* LimitName(Bottleneck limit) {
+			switch (limit) {
+			case Bottleneck::Gpu: return "gpu";
+			case Bottleneck::Cpu: return "cpu";
+			case Bottleneck::Present: return "present";
+			default: return "none";
+			}
+		}
+	}
+
+	void Application::SaveProfilerReference(bool save) {
+		m_ProfilerReference.clear();
+		m_ProfilerReferenceFrameMs = 0.0f;
+		if (!save)
+			return;
+		const ProfileStats stats = ComputeStats(LastFrames(WINDOWS[m_ProfilerWindow]));
+		for (const StatRow& row : stats.Gpu)
+			m_ProfilerReference[row.Key] = row.Sum.Avg;
+		for (const StatRow& row : stats.Cpu)
+			m_ProfilerReference[row.Key] = row.Sum.Avg;
+		m_ProfilerReferenceFrameMs = stats.Diag.FrameMs;
+	}
+
+	// Il riepilogo da incollare in una issue o in chat: diagnosi, tempi, memoria, ultimo caricamento
+	std::string Application::ProfilerSummaryText() const {
+		const ProfileStats stats = ComputeStats(LastFrames(WINDOWS[m_ProfilerWindow]));
+		std::string out;
+		char line[256];
+		auto add = [&](const char* format, auto... args) {
+			snprintf(line, sizeof(line), format, args...);
+			out += line;
+			out += '\n';
+		};
+		const LoadCapture& load = Profiler::Get().LastLoad();
+		add("Lucerna profile: %s on %s, %zu frames", load.Label.empty() ? "(no scene file)" : load.Label.c_str(), m_Vulkan.DeviceName(), stats.Frames);
+		bool warn = false;
+		const auto [label, detail] = DiagnosisText(stats.Diag, warn);
+		add("%s: %s", label.c_str(), detail.c_str());
+		add("Frame %.2f ms (%.0f fps): CPU work %.2f, waiting for GPU %.2f, waiting for present %.2f",
+		    stats.Diag.FrameMs, stats.Diag.FrameMs > 0.0f ? 1000.0f / stats.Diag.FrameMs : 0.0f, stats.Diag.CpuMs, stats.Diag.GpuWaitMs, stats.Diag.PresentWaitMs);
+		if (stats.HasThroughput())
+			add("Throughput: %.0f Mrays/s, %.2f M rays/frame, %.2f rays/pixel", stats.MraysPerSecond(), stats.RaysPerFrame() / 1e6, stats.RaysPerPixel());
+		add("");
+		add("%-32s %8s %8s %8s %8s", "GPU pass (ms)", "min", "avg", "p99", "max");
+		for (const StatRow& row : stats.Gpu)
+			add("%-32s %8.2f %8.2f %8.2f %8.2f", (std::string(row.Depth * 2, ' ') + row.Name).c_str(), row.Sum.Min, row.Sum.Avg, row.Sum.P99, row.Sum.Max);
+		add("");
+		add("%-32s %8s %8s", "CPU scope (ms)", "avg", "p99");
+		for (const StatRow& row : stats.Cpu)
+			add("%-32s %8.2f %8.2f", (std::string(row.Depth * 2, ' ') + row.Name).c_str(), row.Sum.Avg, row.Sum.P99);
+		const MemoryReport memory = m_Vulkan.Memory();
+		add("");
+		if (memory.HasBudget)
+			add("VRAM: %.0f MB used, %.0f MB budget, %.0f MB heap", memory.HeapUsage / 1e6, memory.HeapBudget / 1e6, memory.HeapSize / 1e6);
+		else
+			add("VRAM: %.0f MB tracked, %.0f MB heap", memory.DeviceTotal() / 1e6, memory.HeapSize / 1e6);
+		for (size_t c = 0; c < static_cast<size_t>(MemoryCategory::Count); c++)
+			if (memory.Device[c] > 0)
+				add("  %-30s %8.1f MB", MemoryCategoryName(static_cast<MemoryCategory>(c)), memory.Device[c] / 1e6);
+		const ProcessMemoryInfo ram = ProcessMemory();
+		add("RAM: %.0f MB resident, %.0f MB peak", ram.Resident / 1e6, ram.Peak / 1e6);
+		if (!load.Label.empty()) {
+			add("");
+			add("Last load: %s in %.2f s", load.Label.c_str(), load.TotalMs / 1000.0f);
+			for (const LoadPhase& phase : load.Phases)
+				add("  %-40s %8.0f ms", (std::string(phase.Depth * 2, ' ') + phase.Name).c_str(), phase.Ms);
+		}
+		return out;
+	}
+
+	// PT_PROFILE: lo stesso riepilogo in JSON, alla fine di una run scriptata. I primi frame si
+	// saltano: sono il caricamento e il riscaldamento, e falserebbero max e p99.
+	void Application::WriteProfile(const std::string& path) const {
+		const std::deque<FrameRecord>& history = Profiler::Get().History();
+		const size_t skip = history.size() > 40 ? 10 : 0;
+		const ProfileStats stats = ComputeStats(LastFrames(history.size() - skip));
+		auto summary = [](const Summary& s) { return nlohmann::json{ { "min", s.Min }, { "avg", s.Avg }, { "p99", s.P99 }, { "max", s.Max } }; };
+
+		nlohmann::json j;
+		const LoadCapture& load = Profiler::Get().LastLoad();
+		j["scene"] = load.Label;
+		j["device"] = m_Vulkan.DeviceName();
+		j["frames"] = stats.Frames;
+		j["diagnosis"] = { { "limit", LimitName(stats.Diag.Limit) }, { "frameMs", stats.Diag.FrameMs }, { "cpuWorkMs", stats.Diag.CpuMs },
+		                   { "gpuWaitMs", stats.Diag.GpuWaitMs }, { "presentWaitMs", stats.Diag.PresentWaitMs },
+		                   { "gpuBusyMs", stats.Diag.GpuBusyMs }, { "topPass", stats.Diag.TopPass }, { "topPassMs", stats.Diag.TopPassMs } };
+		for (const StatRow& row : stats.Gpu)
+			j["gpu"].push_back({ { "name", row.Name }, { "depth", row.Depth }, { "ms", summary(row.Sum) } });
+		for (const StatRow& row : stats.Cpu)
+			j["cpu"].push_back({ { "name", row.Name }, { "path", row.Key.substr(4) }, { "depth", row.Depth }, { "ms", summary(row.Sum) } });
+		if (stats.HasThroughput())
+			j["throughput"] = { { "mraysPerSecond", stats.MraysPerSecond() }, { "raysPerFrame", stats.RaysPerFrame() }, { "raysPerPixel", stats.RaysPerPixel() } };
+		const MemoryReport memory = m_Vulkan.Memory();
+		nlohmann::json categories = nlohmann::json::object();
+		for (size_t c = 0; c < static_cast<size_t>(MemoryCategory::Count); c++)
+			if (memory.Device[c] > 0)
+				categories[MemoryCategoryName(static_cast<MemoryCategory>(c))] = memory.Device[c];
+		j["memory"] = { { "heapBytes", memory.HeapSize }, { "categoryBytes", categories } };
+		if (memory.HasBudget)
+			j["memory"]["budget"] = { { "budgetBytes", memory.HeapBudget }, { "usageBytes", memory.HeapUsage } };
+		const ProcessMemoryInfo ram = ProcessMemory();
+		j["ram"] = { { "residentBytes", ram.Resident }, { "peakBytes", ram.Peak } };
+		if (!load.Label.empty()) {
+			j["load"] = { { "label", load.Label }, { "totalMs", load.TotalMs } };
+			for (const LoadPhase& phase : load.Phases)
+				j["load"]["phases"].push_back({ { "name", phase.Name }, { "depth", phase.Depth }, { "startMs", phase.StartMs }, { "ms", phase.Ms } });
+		}
+
+		std::ofstream file(path);
+		file << j.dump(2) << std::endl;
+		std::cout << (file ? "Profile: " : "Profile: could not write ") << path << std::endl;
 	}
 
 	std::string Application::ProfilerHudLine(bool& warn) const {
@@ -616,10 +795,24 @@ namespace Lucerna {
 			else
 				ImGui::TextColored(Theme::SelectedText, ICON_PAUSE " Paused");
 		}
+		const bool hasReference = m_ProfilerReferenceFrameMs > 0.0f;
+		const char* copyLabel = ICON_RESTORE " Copy summary";
+		const char* referenceLabel = hasReference ? "Clear reference" : "Save reference";
 		const char* pauseLabel = profiler.Paused() ? ICON_PLAY " Resume" : ICON_PAUSE " Pause";
 		const float comboW = 120.0f * s;
-		const float pauseW = ImGui::CalcTextSize(pauseLabel).x + ImGui::GetStyle().FramePadding.x * 2;
-		ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - comboW - pauseW - ImGui::GetStyle().ItemSpacing.x);
+		auto pillW = [](const char* label) { return ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2; };
+		const float spacing = ImGui::GetStyle().ItemSpacing.x;
+		ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - comboW - pillW(pauseLabel) - pillW(referenceLabel) - pillW(copyLabel) - 3 * spacing);
+		if (UI::Pill(copyLabel))
+			ImGui::SetClipboardText(ProfilerSummaryText().c_str());
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Copy diagnosis, times, memory and the last load as text");
+		ImGui::SameLine();
+		if (UI::Pill(referenceLabel, hasReference))
+			SaveProfilerReference(!hasReference);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip(hasReference ? "Remove the comparison column" : "Keep the current averages and compare everything against them");
+		ImGui::SameLine();
 		if (UI::Pill(pauseLabel, profiler.Paused())) {
 			if (profiler.Paused())
 				resume();
@@ -823,6 +1016,14 @@ namespace Lucerna {
 				else
 					snprintf(refText, sizeof(refText), "display 60 Hz \xc2\xb7 16.7 ms");
 				refLine(1000.0f / refresh, refText, Col(Theme::Accent));
+				if (m_ProfilerReferenceFrameMs > 0.0f && m_ProfilerReferenceFrameMs <= yMax) {
+					const float y = yOf(m_ProfilerReferenceFrameMs);
+					for (float x = plotMin.x; x < plotMax.x; x += 8.0f * s)
+						list->AddLine(ImVec2(x, y), ImVec2(std::min(x + 4.0f * s, plotMax.x), y), Col(Theme::IconSky), 1.5f);
+					char text[48];
+					snprintf(text, sizeof(text), "reference \xc2\xb7 %.2f ms", m_ProfilerReferenceFrameMs);
+					list->AddText(ImVec2(plotMin.x + 6.0f * s, y - ImGui::GetTextLineHeight() - 2.0f * s), Col(Theme::IconSky), text);
+				}
 				ImGui::PopFont();
 
 				if (hoveredIndex >= 0) {
@@ -882,7 +1083,8 @@ namespace Lucerna {
 				const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit;
 				ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
 				ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
-				if (ImGui::BeginTable("##gpu", 6, flags)) {
+				const bool compare = m_ProfilerReferenceFrameMs > 0.0f;
+				if (ImGui::BeginTable("##gpu", compare ? 7 : 6, flags)) {
 					const float numW = 50.0f * s;
 					ImGui::TableSetupColumn("GPU pass", ImGuiTableColumnFlags_WidthStretch);
 					ImGui::TableSetupColumn("min", ImGuiTableColumnFlags_WidthFixed, numW);
@@ -890,6 +1092,8 @@ namespace Lucerna {
 					ImGui::TableSetupColumn("p99", ImGuiTableColumnFlags_WidthFixed, numW);
 					ImGui::TableSetupColumn("max", ImGuiTableColumnFlags_WidthFixed, numW);
 					ImGui::TableSetupColumn("%", ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+					if (compare)
+						ImGui::TableSetupColumn("vs ref", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
 					ImGui::TableHeadersRow();
 
 					const float frameRef = pinned ? pinnedFrame->FrameMs : diagnosis.FrameMs;
@@ -927,6 +1131,10 @@ namespace Lucerna {
 						const std::string pct = Percent(shown, frameRef);
 						ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(pct.c_str()).x);
 						ImGui::TextColored(Theme::TextDim, "%s", pct.c_str());
+						if (compare) {
+							ImGui::TableSetColumnIndex(6);
+							DeltaCell(m_ProfilerReference, GpuKey(key), shown);
+						}
 						ImGui::PopFont();
 					}
 					ImGui::EndTable();
@@ -936,7 +1144,7 @@ namespace Lucerna {
 				if (pinned)
 					ImGui::TextWrapped("Values are the pinned frame; min, p99 and max stay over the %zu-frame window. Resume or press Esc to go back to averages.", frames.size());
 				else
-					ImGui::TextDisabled("Averages over the last %zu frames. Click a bar to pin a frame.", frames.size());
+					ImGui::TextDisabled(compare ? "Averages over the last %zu frames; vs ref: orange slower, blue faster." : "Averages over the last %zu frames. Click a bar to pin a frame.", frames.size());
 
 				// ---- il throughput: le ray query contate dallo shader sul tempo del path tracer
 				{
@@ -996,12 +1204,14 @@ namespace Lucerna {
 				const std::vector<std::vector<float>> series = CpuSeries(rows, frames);
 				ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
 				ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
-				if (ImGui::BeginTable("##cpu", 4, flags | ImGuiTableFlags_ScrollY, ImVec2(0.0f, std::max(ImGui::GetContentRegionAvail().y, 80.0f * s)))) {
+				if (ImGui::BeginTable("##cpu", compare ? 5 : 4, flags | ImGuiTableFlags_ScrollY, ImVec2(0.0f, std::max(ImGui::GetContentRegionAvail().y, 80.0f * s)))) {
 					ImGui::TableSetupScrollFreeze(0, 1);
 					ImGui::TableSetupColumn("CPU scope", ImGuiTableColumnFlags_WidthStretch);
 					ImGui::TableSetupColumn(pinned ? "frame" : "avg", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
 					ImGui::TableSetupColumn("p99", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
 					ImGui::TableSetupColumn("% frame", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+					if (compare)
+						ImGui::TableSetupColumn("vs ref", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
 					ImGui::TableHeadersRow();
 
 					int collapsedDepth = -1; // i discendenti di una riga chiusa non si mostrano
@@ -1055,6 +1265,10 @@ namespace Lucerna {
 								ImGui::TextUnformatted(text[c]);
 							else
 								ImGui::TextColored(Theme::TextDim, "%s", text[c]);
+						}
+						if (compare) {
+							ImGui::TableSetColumnIndex(4);
+							DeltaCell(m_ProfilerReference, CpuKey(row), shown);
 						}
 						ImGui::PopFont();
 					}
