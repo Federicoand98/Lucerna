@@ -1,4 +1,5 @@
 #include "Render/RenderScene.h"
+#include "Core/Profiler.h"
 
 #include "stb/stb_image.h"
 #include <cstring>
@@ -319,16 +320,26 @@ namespace Lucerna {
 				m_TextureLayer[texture.Id] = static_cast<int>(list.size());
 				list.push_back(texture.Path);
 			}
-			m_AlbedoTextures.Load(color);
+			{
+				PROFILE_SCOPE("Color textures");
+				m_AlbedoTextures.Load(color);
+			}
+			PROFILE_SCOPE("Data textures");
 			m_DataTextures.Load(data, 1024, VK_FORMAT_R8G8B8A8_UNORM);
 		}
 
-		if (changes & (GeometryChanged | InstancesChanged))
+		if (changes & (GeometryChanged | InstancesChanged)) {
+			PROFILE_SCOPE("Triangle buffers");
 			BuildGeometry(scene, assets);
-		if ((changes & (GeometryChanged | InstancesChanged | MeshesChanged)) || materialsAdded)
+		}
+		if ((changes & (GeometryChanged | InstancesChanged | MeshesChanged)) || materialsAdded) {
+			PROFILE_SCOPE("Mesh infos");
 			BuildMeshInfos(scene, assets);
-		if (changes & (GeometryChanged | InstancesChanged))
+		}
+		if (changes & (GeometryChanged | InstancesChanged)) {
+			PROFILE_SCOPE("BLAS build");
 			m_Accel.BuildMeshes(m_AssetRanges, m_TriPositions);
+		}
 
 		if ((changes & PrimitivesChanged) || materialsAdded) {
 			std::vector<GpuSphere> spheres;
@@ -341,10 +352,14 @@ namespace Lucerna {
 			Upload(m_Quads, quads.data(), sizeof(GpuQuad) * quads.size());
 			m_NumSpheres = static_cast<int>(spheres.size());
 		}
-		if (changes & PrimitivesChanged)
+		if (changes & PrimitivesChanged) {
+			PROFILE_SCOPE("Primitive BLAS build");
 			m_Accel.BuildPrimitives(PrimitiveBounds(scene, assets));
-		if (changes & (GeometryChanged | InstancesChanged | MeshesChanged | PrimitivesChanged))
+		}
+		if (changes & (GeometryChanged | InstancesChanged | MeshesChanged | PrimitivesChanged)) {
+			PROFILE_SCOPE("TLAS build");
 			m_Accel.BuildTopLevel(m_MeshInfos, m_InstanceBlas);
+		}
 
 		if (changes & (MaterialsChanged | TexturesChanged)) {
 			std::vector<GpuMaterial> materials;
@@ -355,8 +370,10 @@ namespace Lucerna {
 		}
 
 		// la light list dipende dalle primitive emissive, dai loro materiali, dal Sole e dalle luci
-		if (changes & (PrimitivesChanged | MaterialsChanged | LightsChanged))
+		if (changes & (PrimitivesChanged | MaterialsChanged | LightsChanged)) {
+			PROFILE_SCOPE("Light list");
 			BuildLights(scene, assets);
+		}
 
 		if (changes & EnvironmentChanged) {
 			m_BackgroundColor = scene.BackgroundColor();

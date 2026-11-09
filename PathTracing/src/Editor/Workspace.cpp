@@ -103,17 +103,28 @@ namespace Lucerna {
 	void Application::RenderUI(float deltaTime) {
 		ValidateSelection();
 
-		if (m_ShowOutliner)
+		if (m_ShowOutliner) {
+			PROFILE_SCOPE("Outliner");
 			DrawOutlinerPanel();
-		if (m_ShowMaterials)
+		}
+		if (m_ShowMaterials) {
+			PROFILE_SCOPE("Materials");
 			DrawMaterialsPanel();
-		if (m_ShowProperties)
+		}
+		if (m_ShowProperties) {
+			PROFILE_SCOPE("Properties");
 			DrawPropertiesPanel();
+		}
 		if (m_ShowPreferences)
 			DrawPreferencesWindow();
-		if (m_ShowProfiler)
+		if (m_ShowProfiler) {
+			PROFILE_SCOPE("Profiler");
 			DrawProfilerPanel();
-		DrawViewportPanel(deltaTime);
+		}
+		{
+			PROFILE_SCOPE("Viewport");
+			DrawViewportPanel(deltaTime);
+		}
 	}
 
 	// ---------------------------------------------------------------- menu

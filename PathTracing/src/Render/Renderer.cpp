@@ -3,6 +3,7 @@
 //
 
 #include "Render/Renderer.h"
+#include "Core/Profiler.h"
 #include "Core/Paths.h"
 
 #include "stb/stb_image_write.h"
@@ -120,7 +121,11 @@ namespace Lucerna {
 		// La scena per la GPU segue scena e asset; qualunque loro cambiamento, o delle impostazioni
 		// che toccano l'integratore, invalida i campioni accumulati.
 		const uint32_t changes = scene.TakeChanges() | assets.TakeChanges();
-		m_Scene->Sync(scene, assets, changes);
+		{
+			PROFILE_SCOPE("RenderScene.Sync");
+			m_Scene->Sync(scene, assets, changes);
+		}
+		PROFILE_SCOPE("Record commands");
 		if (changes != NoChange || AccumulationKey(Settings, View) != AccumulationKey(m_LastSettings, m_LastView))
 			RestartAccumulation();
 		m_LastSettings = Settings;

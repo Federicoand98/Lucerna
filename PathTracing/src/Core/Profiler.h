@@ -4,9 +4,12 @@
 #define CORE_PROFILER_H
 
 #include <cstddef>
+#include <cstdint>
+#include <unordered_map>
 #include <deque>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace Lucerna {
@@ -22,6 +25,14 @@ namespace Lucerna {
 		float Ms = 0.0f;
 	};
 
+	// Uno scope CPU (PROFILE_SCOPE), nell'ordine in cui si apre: la profondita' dice chi e' dentro chi.
+	struct CpuTiming {
+		std::string Name;
+		int Depth = 0;
+		float Ms = 0.0f;
+		uint32_t Id = 0; // il percorso dalla radice ("Renderer/RenderScene.Sync"), come numero: Profiler::ScopePath
+	};
+
 	// Un giro del ciclo: quanto e' durato e dove e' andato il tempo.
 	struct FrameRecord {
 		float FrameMs = 0.0f;   // dall'inizio di questo giro all'inizio del prossimo
@@ -29,6 +40,7 @@ namespace Lucerna {
 		float AcquireMs = 0.0f;
 		float PresentMs = 0.0f;
 		std::vector<GpuTiming> Gpu; // le passate del frame, poi le build fatte in Immediate
+		std::vector<CpuTiming> Cpu; // gli scope del main thread, in preordine
 
 		// Dove la CPU si ferma dipende dal driver: NVIDIA aspetta la GPU dentro il present, non
 		// nella fence. Quindi l'attesa si divide per causa e non per chiamata: va alla GPU fino al
@@ -74,6 +86,18 @@ namespace Lucerna {
 		// Una build in Immediate: e' sincrona, quindi appartiene al giro in corso
 		void AddImmediateGpu(GpuTiming timing) { Current().Gpu.push_back(std::move(timing)); }
 
+		// Gli scope CPU, attraverso PROFILE_SCOPE. Solo il thread che ha creato il profiler (il
+		// main thread) registra: Begin ritorna false altrove, o oltre MaxScopes in un giro, e
+		// allora End non va chiamata.
+		static constexpr size_t MaxScopes = 512;
+		bool BeginScope(std::string_view name);
+		void EndScope();
+		// Ogni percorso di scope distinto ha un id, assegnato la prima volta che compare: chi legge
+		// lo storico indicizza per id invece di confrontare stringhe a ogni frame.
+		size_t ScopeCount() const { return m_ScopePaths.size(); }
+		const std::string& ScopePath(uint32_t id) const { return m_ScopePaths[id]; }
+		int ScopeParent(uint32_t id) const { return m_ScopeParents[id]; } // -1 = scope di primo livello
+
 		// I giri completi, dal piu' vecchio. In pausa non cresce, ma Latest si aggiorna.
 		const std::deque<FrameRecord>& History() const { return m_History; }
 		const FrameRecord& Latest() const { return m_Latest; }
@@ -87,6 +111,16 @@ namespace Lucerna {
 		FrameRecord& Current();
 		void Complete(FrameRecord record);
 
+		struct OpenScope {
+			size_t Index;
+			double Start;
+		};
+
+		std::thread::id m_MainThread = std::this_thread::get_id();
+		std::vector<OpenScope> m_OpenScopes;
+		std::vector<std::string> m_ScopePaths;
+		std::vector<int> m_ScopeParents;
+		std::unordered_map<std::string, uint32_t> m_ScopeIds;
 		std::deque<FrameRecord> m_History;
 		FrameRecord m_Latest;
 		FrameRecord m_Current, m_Pending;
@@ -94,6 +128,21 @@ namespace Lucerna {
 		bool m_HasCurrent = false, m_HasPending = false;
 		bool m_Paused = false;
 	};
+
+	// Misura il blocco in cui sta: PROFILE_SCOPE("RenderScene.Sync");
+	class CpuScope {
+	public:
+		explicit CpuScope(std::string_view name) : m_Active(Profiler::Get().BeginScope(name)) {}
+		~CpuScope() { if (m_Active) Profiler::Get().EndScope(); }
+		CpuScope(const CpuScope&) = delete;
+		CpuScope& operator=(const CpuScope&) = delete;
+	private:
+		bool m_Active;
+	};
 }
+
+#define LUCERNA_PROFILE_CONCAT2(a, b) a##b
+#define LUCERNA_PROFILE_CONCAT(a, b) LUCERNA_PROFILE_CONCAT2(a, b)
+#define PROFILE_SCOPE(name) ::Lucerna::CpuScope LUCERNA_PROFILE_CONCAT(profileScope, __LINE__)(name)
 
 #endif // CORE_PROFILER_H

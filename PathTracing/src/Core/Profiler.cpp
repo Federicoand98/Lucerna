@@ -30,20 +30,23 @@ namespace Lucerna {
 		return sum;
 	}
 
-	// p99 col nearest-rank: il valore sotto cui sta il 99% dei frame
+	// p99 col nearest-rank: il valore sotto cui sta il 99% dei frame. nth_element e non sort:
+	// il pannello ne calcola una trentina a ogni frame.
 	Summary Summarize(std::vector<float> values) {
 		Summary s;
 		if (values.empty())
 			return s;
-		std::sort(values.begin(), values.end());
 		double sum = 0.0;
-		for (float v : values)
+		s.Min = s.Max = values.front();
+		for (float v : values) {
 			sum += v;
-		const size_t rank = static_cast<size_t>(std::ceil(0.99 * values.size()));
-		s.Min = values.front();
-		s.Max = values.back();
+			s.Min = std::min(s.Min, v);
+			s.Max = std::max(s.Max, v);
+		}
 		s.Avg = static_cast<float>(sum / values.size());
-		s.P99 = values[std::max<size_t>(rank, 1) - 1];
+		const size_t rank = std::max<size_t>(static_cast<size_t>(std::ceil(0.99 * values.size())), 1) - 1;
+		std::nth_element(values.begin(), values.begin() + rank, values.end());
+		s.P99 = values[rank];
 		return s;
 	}
 
@@ -109,7 +112,37 @@ namespace Lucerna {
 		return m_Current;
 	}
 
+	bool Profiler::BeginScope(std::string_view name) {
+		if (std::this_thread::get_id() != m_MainThread)
+			return false;
+		FrameRecord& current = Current();
+		if (current.Cpu.size() >= MaxScopes)
+			return false;
+		const int parent = m_OpenScopes.empty() ? -1 : static_cast<int>(current.Cpu[m_OpenScopes.back().Index].Id);
+		std::string path = parent < 0 ? std::string(name) : m_ScopePaths[parent] + "/" + std::string(name);
+		auto [found, added] = m_ScopeIds.try_emplace(path, static_cast<uint32_t>(m_ScopePaths.size()));
+		if (added) {
+			m_ScopePaths.push_back(std::move(path));
+			m_ScopeParents.push_back(parent);
+		}
+		current.Cpu.push_back({ std::string(name), static_cast<int>(m_OpenScopes.size()), 0.0f, found->second });
+		m_OpenScopes.push_back({ current.Cpu.size() - 1, NowMs() });
+		return true;
+	}
+
+	void Profiler::EndScope() {
+		if (m_OpenScopes.empty())
+			return;
+		const OpenScope open = m_OpenScopes.back();
+		m_OpenScopes.pop_back();
+		if (open.Index < m_Current.Cpu.size())
+			m_Current.Cpu[open.Index].Ms = static_cast<float>(NowMs() - open.Start);
+	}
+
 	void Profiler::BeginFrame() {
+		// uno scope non attraversa il confine di un giro: quelli rimasti aperti si chiudono qui
+		while (!m_OpenScopes.empty())
+			EndScope();
 		const double now = NowMs();
 		if (m_HasCurrent) {
 			m_Current.FrameMs = static_cast<float>(now - m_CurrentStart);
@@ -144,6 +177,8 @@ namespace Lucerna {
 	}
 
 	void Profiler::Reset() {
+		const std::thread::id main = m_MainThread;
 		*this = Profiler();
+		m_MainThread = main;
 	}
 }

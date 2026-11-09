@@ -8,6 +8,10 @@
 
 #include "imgui_internal.h"
 
+#include <optional>
+#include <unordered_map>
+#include <unordered_set>
+
 namespace Lucerna {
 
 	namespace {
@@ -81,6 +85,75 @@ namespace Lucerna {
 				if (raw <= step * power)
 					return step * power;
 			return 10.0f * power;
+		}
+
+		// Una riga della tabella CPU: il frame e le sue attese (Id < 0), o uno scope col suo id
+		struct CpuRow {
+			std::string Name;
+			int Depth = 0;
+			int Id = -1;
+			std::string Key; // per ricordare le righe chiuse: il percorso, o il nome di una riga fissa
+		};
+		enum FixedRow { RowFrame = -2, RowFence = -3, RowAcquire = -4, RowPresent = -5, RowUntracked = -6 };
+
+		// Il frame, le attese, gli scope nell'ordine del frame piu' recente (poi quelli visti solo
+		// prima, dopo i fratelli), il present e il tempo che nessuno scope copre
+		std::vector<CpuRow> CpuRows(const std::vector<const FrameRecord*>& frames) {
+			const Profiler& profiler = Profiler::Get();
+			auto descends = [&](int id, int ancestor) {
+				for (; id >= 0; id = profiler.ScopeParent(id))
+					if (id == ancestor)
+						return true;
+				return false;
+			};
+			std::vector<CpuRow> scopes;
+			std::vector<bool> known(profiler.ScopeCount(), false);
+			for (auto it = frames.rbegin(); it != frames.rend(); ++it)
+				for (const CpuTiming& scope : (*it)->Cpu) {
+					if (known[scope.Id])
+						continue;
+					known[scope.Id] = true;
+					const int parent = profiler.ScopeParent(scope.Id);
+					auto at = scopes.end();
+					if (parent >= 0)
+						for (auto r = scopes.begin(); r != scopes.end(); ++r)
+							if (descends(r->Id, parent))
+								at = r + 1;
+					scopes.insert(at, { scope.Name, scope.Depth + 1, static_cast<int>(scope.Id), profiler.ScopePath(scope.Id) });
+				}
+			std::vector<CpuRow> rows = { { "Frame", 0, RowFrame, "#frame" }, { "Fence wait", 1, RowFence, "#fence" }, { "Acquire image", 1, RowAcquire, "#acquire" } };
+			rows.insert(rows.end(), scopes.begin(), scopes.end());
+			rows.push_back({ "Present", 1, RowPresent, "#present" });
+			rows.push_back({ "Untracked", 1, RowUntracked, "#untracked" });
+			return rows;
+		}
+
+		// I millisecondi di ogni riga in ogni frame: series[riga][frame]
+		std::vector<std::vector<float>> CpuSeries(const std::vector<CpuRow>& rows, const std::vector<const FrameRecord*>& frames) {
+			std::vector<int> rowOfScope(Profiler::Get().ScopeCount(), -1);
+			int fixed[7] = {};
+			for (size_t r = 0; r < rows.size(); r++) {
+				if (rows[r].Id >= 0)
+					rowOfScope[rows[r].Id] = static_cast<int>(r);
+				else
+					fixed[-rows[r].Id] = static_cast<int>(r);
+			}
+			std::vector<std::vector<float>> series(rows.size(), std::vector<float>(frames.size(), 0.0f));
+			for (size_t f = 0; f < frames.size(); f++) {
+				const FrameRecord& frame = *frames[f];
+				series[fixed[-RowFrame]][f] = frame.FrameMs;
+				series[fixed[-RowFence]][f] = frame.FenceMs;
+				series[fixed[-RowAcquire]][f] = frame.AcquireMs;
+				series[fixed[-RowPresent]][f] = frame.PresentMs;
+				float tracked = frame.WaitMs();
+				for (const CpuTiming& scope : frame.Cpu) {
+					series[rowOfScope[scope.Id]][f] += scope.Ms;
+					if (scope.Depth == 0)
+						tracked += scope.Ms;
+				}
+				series[fixed[-RowUntracked]][f] = std::max(0.0f, frame.FrameMs - tracked);
+			}
+			return series;
 		}
 
 		std::string Percent(float part, float whole) {
@@ -196,7 +269,9 @@ namespace Lucerna {
 			return;
 		}
 
+		std::optional<CpuScope> diagnosisScope(std::in_place, "Diagnosis");
 		const Diagnosis diagnosis = Diagnose(frames);
+		diagnosisScope.reset();
 		ImDrawList* list = ImGui::GetWindowDrawList();
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f * s));
 
@@ -290,6 +365,7 @@ namespace Lucerna {
 			// ---- il grafico: una barra per frame, le passate GPU impilate dentro il frame della CPU
 			ImGui::TableSetColumnIndex(0);
 			{
+				PROFILE_SCOPE("Graph");
 				ImGui::PushFont(UI::BoldFont());
 				ImGui::TextUnformatted("Frame time");
 				ImGui::PopFont();
@@ -298,6 +374,7 @@ namespace Lucerna {
 
 				// il grafico prende l'altezza che c'e', tolta la legenda sotto
 				const float avail = ImGui::GetContentRegionAvail().x;
+				// il grafico prende l'altezza che c'e', tolta la legenda sotto
 				const float legendH = ImGui::GetTextLineHeightWithSpacing() + 12.0f * s;
 				const float axisW = 34.0f * s;
 				const float plotH = std::clamp(ImGui::GetContentRegionAvail().y - legendH - 16.0f * s, 60.0f * s, 280.0f * s);
@@ -427,11 +504,13 @@ namespace Lucerna {
 				ImGui::SameLine(0.0f, 16.0f * s);
 				Swatch(Col(GHOST));
 				ImGui::TextColored(Theme::TextDim, "CPU frame");
+
 			}
 
 			// ---- la tabella delle passate GPU
 			ImGui::TableSetColumnIndex(1);
 			{
+				std::optional<CpuScope> tableScope(std::in_place, "GPU table");
 				const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit;
 				ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
 				ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
@@ -490,6 +569,79 @@ namespace Lucerna {
 					ImGui::TextWrapped("Values are the pinned frame; min, p99 and max stay over the %zu-frame window. Resume or press Esc to go back to averages.", frames.size());
 				else
 					ImGui::TextDisabled("Averages over the last %zu frames. Click a bar to pin a frame.", frames.size());
+
+				// ---- la tabella degli scope CPU, ad albero
+				tableScope.emplace("CPU table");
+				ImGui::Spacing();
+				const std::vector<CpuRow> rows = CpuRows(frames);
+				const std::vector<std::vector<float>> series = CpuSeries(rows, frames);
+				ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
+				ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
+				if (ImGui::BeginTable("##cpu", 4, flags | ImGuiTableFlags_ScrollY, ImVec2(0.0f, std::max(ImGui::GetContentRegionAvail().y, 80.0f * s)))) {
+					ImGui::TableSetupScrollFreeze(0, 1);
+					ImGui::TableSetupColumn("CPU scope", ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableSetupColumn(pinned ? "frame" : "avg", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+					ImGui::TableSetupColumn("p99", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+					ImGui::TableSetupColumn("% frame", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+					ImGui::TableHeadersRow();
+
+					int collapsedDepth = -1; // i discendenti di una riga chiusa non si mostrano
+					for (size_t r = 0; r < rows.size(); r++) {
+						const CpuRow& row = rows[r];
+						if (collapsedDepth >= 0 && row.Depth > collapsedDepth)
+							continue;
+						collapsedDepth = -1;
+						const bool parent = r + 1 < rows.size() && rows[r + 1].Depth > row.Depth;
+						const bool collapsed = parent && m_ProfilerCollapsed.count(row.Key) > 0;
+						if (collapsed)
+							collapsedDepth = row.Depth;
+
+						const Summary sum = Summarize(series[r]);
+						const float shown = pinned ? series[r][m_ProfilerPinned] : sum.Avg;
+						const float frameRef = pinned ? series[0][m_ProfilerPinned] : diagnosis.FrameMs;
+
+						ImGui::TableNextRow();
+						ImGui::TableSetColumnIndex(0);
+						ImGui::PushID(row.Key.c_str());
+						ImGui::Indent(16.0f * s * row.Depth);
+						const ImVec4 tone = row.Depth <= 1 ? Theme::Text : Theme::TextDim;
+						if (parent) {
+							const std::string label = std::string(collapsed ? ICON_CHEVRON_RIGHT " " : ICON_CHEVRON_DOWN " ") + row.Name;
+							ImGui::PushStyleColor(ImGuiCol_Text, tone);
+							if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+								if (collapsed)
+									m_ProfilerCollapsed.erase(row.Key);
+								else
+									m_ProfilerCollapsed.insert(row.Key);
+							}
+							ImGui::PopStyleColor();
+						}
+						else {
+							ImGui::Dummy(ImVec2(ImGui::CalcTextSize(ICON_CHEVRON_DOWN " ").x, 0.0f));
+							ImGui::SameLine(0.0f, 0.0f);
+							ImGui::TextColored(row.Id == RowUntracked ? Theme::TextDim : tone, "%s", row.Name.c_str());
+						}
+						ImGui::Unindent(16.0f * s * row.Depth);
+						ImGui::PopID();
+
+						ImGui::PushFont(UI::MonoFont());
+						char text[3][24];
+						snprintf(text[0], sizeof(text[0]), "%.2f", shown);
+						snprintf(text[1], sizeof(text[1]), "%.2f", sum.P99);
+						snprintf(text[2], sizeof(text[2]), "%s", Percent(shown, frameRef).c_str());
+						for (int c = 0; c < 3; c++) {
+							ImGui::TableSetColumnIndex(c + 1);
+							ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(text[c]).x);
+							if (c == 0)
+								ImGui::TextUnformatted(text[c]);
+							else
+								ImGui::TextColored(Theme::TextDim, "%s", text[c]);
+						}
+						ImGui::PopFont();
+					}
+					ImGui::EndTable();
+				}
+				ImGui::PopStyleColor(2);
 			}
 			ImGui::EndTable();
 		}

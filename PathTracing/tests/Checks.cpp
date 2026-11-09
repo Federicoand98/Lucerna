@@ -14,6 +14,7 @@
 
 #include <cstdio>
 #include <atomic>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -100,6 +101,36 @@ int main() {
 		profiler.BeginFrame();
 		profiler.BeginFrame();                        // un giro senza GPU (finestra ridotta) si tiene lo stesso
 		CHECK(profiler.Latest().Gpu.empty());
+		profiler.Reset();
+
+		// scope CPU: annidati in preordine, nuovi a ogni giro, ignorati fuori dal main thread
+		profiler.BeginFrame();
+		{
+			PROFILE_SCOPE("A");
+			{ PROFILE_SCOPE("B"); }
+			ParallelFor(64, [](size_t) { PROFILE_SCOPE("worker"); });
+			std::thread([] { PROFILE_SCOPE("thread"); }).join();
+		}
+		{ PROFILE_SCOPE("C"); }
+		profiler.BeginScope("left open"); // un giro lo chiude da se'
+		profiler.BeginFrame();
+		profiler.AttachFrameGpu({});
+		const std::vector<CpuTiming>& cpu = profiler.History().back().Cpu;
+		CHECK(cpu.size() == 4);
+		CHECK(cpu.size() == 4 && cpu[0].Name == "A" && cpu[0].Depth == 0 && cpu[1].Name == "B" && cpu[1].Depth == 1);
+		CHECK(cpu.size() == 4 && cpu[2].Name == "C" && cpu[2].Depth == 0 && cpu[3].Name == "left open");
+		CHECK(cpu.size() == 4 && cpu[0].Ms >= cpu[1].Ms);
+		CHECK(cpu.size() == 4 && profiler.ScopePath(cpu[1].Id) == "A/B" && profiler.ScopeParent(cpu[1].Id) == static_cast<int>(cpu[0].Id));
+		CHECK(cpu.size() == 4 && profiler.ScopeParent(cpu[2].Id) == -1 && cpu[2].Id != cpu[0].Id);
+		{ PROFILE_SCOPE("A"); }
+		profiler.BeginFrame();
+		profiler.AttachFrameGpu({});
+		CHECK(profiler.History().back().Cpu.size() == 1 && profiler.History().back().Cpu[0].Depth == 0);
+		CHECK(profiler.History().back().Cpu.size() == 1 && profiler.History().back().Cpu[0].Id == cpu[0].Id); // lo stesso percorso, lo stesso id
+		for (size_t i = 0; i < Profiler::MaxScopes + 10; i++) { PROFILE_SCOPE("many"); }
+		profiler.BeginFrame();
+		profiler.AttachFrameGpu({});
+		CHECK(profiler.History().back().Cpu.size() == Profiler::MaxScopes);
 		profiler.Reset();
 	}
 

@@ -6,6 +6,7 @@
 #include "Editor/Input.h"
 #include "Core/Paths.h"
 #include "Core/Profiler.h"
+#include <optional>
 #include "Editor/Icons.h"
 #include "Editor/Theme.h"
 #include "Editor/Widgets.h"
@@ -243,12 +244,15 @@ namespace Lucerna {
 
 		while (m_IsRunning) {
 			Profiler::Get().BeginFrame();
-			glfwPollEvents();
+			{
+				PROFILE_SCOPE("Events");
+				glfwPollEvents();
 
-			// Chiudere la finestra chiede prima di salvare, se ci sono modifiche
-			if (glfwWindowShouldClose(m_Window)) {
-				glfwSetWindowShouldClose(m_Window, GLFW_FALSE);
-				WhenSaved([this] { m_IsRunning = false; });
+				// Chiudere la finestra chiede prima di salvare, se ci sono modifiche
+				if (glfwWindowShouldClose(m_Window)) {
+					glfwSetWindowShouldClose(m_Window, GLFW_FALSE);
+					WhenSaved([this] { m_IsRunning = false; });
+				}
 			}
 
 			if (!m_Vulkan.BeginFrame())
@@ -259,16 +263,21 @@ namespace Lucerna {
 			// cambi di scena/materiale, dove la storia e' genuinamente invalida.
 			// SetInteracting dice al renderer che la storia va cappata (ghosting) e che puo'
 			// abbassare la risoluzione (render scale).
-			bool cameraMoved = m_Camera.OnUpdate(m_DeltaTime);
-			SyncCameras(cameraMoved);
-			m_Renderer.SetInteracting(cameraMoved);
+			{
+				PROFILE_SCOPE("Camera and live link");
+				bool cameraMoved = m_Camera.OnUpdate(m_DeltaTime);
+				SyncCameras(cameraMoved);
+				m_Renderer.SetInteracting(cameraMoved);
 
-			// Live-link glTF: ricarica la scena se il file e' stato ri-esportato da Blender.
-			PollLiveLink();
+				// Live-link glTF: ricarica la scena se il file e' stato ri-esportato da Blender.
+				PollLiveLink();
 
-			if (m_RescaleRequested)
-				RebuildUiForScale();
+				if (m_RescaleRequested)
+					RebuildUiForScale();
+			}
 
+			// L'interfaccia: tutte le finestre di ImGui, fino al disegno della render esclusa
+			std::optional<CpuScope> uiScope(std::in_place, "UI");
 			// Start the Dear ImGui frame
 			ImGui_ImplVulkan_NewFrame();
 			ImGui_ImplGlfw_NewFrame();
@@ -328,27 +337,39 @@ namespace Lucerna {
 			DrawDeletePopup();
 			DrawSavePrompt();
 			UpdateWindowTitle();
-			Render(m_DeltaTime);
+			uiScope.reset();
 
-			ImGui::Render();
-
-			m_Vulkan.BeginUiPass();
 			{
-				GpuScope scope(m_Vulkan.Cmd(), "ImGui");
-				ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), m_Vulkan.Cmd());
+				PROFILE_SCOPE("Renderer");
+				Render(m_DeltaTime);
 			}
-			m_Vulkan.EndUiPass();
-			m_Vulkan.SubmitFrame();
 
-			if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-				ImGui::UpdatePlatformWindows();
-				ImGui::RenderPlatformWindowsDefault();
+			{
+				PROFILE_SCOPE("ImGui render");
+				ImGui::Render();
+				m_Vulkan.BeginUiPass();
+				{
+					GpuScope scope(m_Vulkan.Cmd(), "ImGui");
+					ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), m_Vulkan.Cmd());
+				}
+				m_Vulkan.EndUiPass();
+			}
+			{
+				PROFILE_SCOPE("Submit");
+				m_Vulkan.SubmitFrame();
+				if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+					ImGui::UpdatePlatformWindows();
+					ImGui::RenderPlatformWindowsDefault();
+				}
 			}
 
 			m_Vulkan.PresentFrame();
 
-			CalculateTime();
-			HandleCaptures();
+			{
+				PROFILE_SCOPE("Captures");
+				CalculateTime();
+				HandleCaptures();
+			}
 		}
 	}
 

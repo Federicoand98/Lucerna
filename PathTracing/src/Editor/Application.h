@@ -15,6 +15,7 @@
 #include "Serialization/BuiltinScenes.h"
 #include "Editor/Document.h"
 #include <functional>
+#include <unordered_set>
 #include "Editor/Camera.h"
 #include "ImGuizmo.h"
 #include "ptpch.h"
@@ -171,6 +172,7 @@ namespace Lucerna {
 		// il frame fissato col clic (-1 nessuno), e se ha il focus (Esc riprende invece di deselezionare)
 		bool m_ShowProfiler = false, m_ProfilerDockChecked = false, m_ProfilerFocused = false, m_FocusProfiler = false;
 		int m_ProfilerWindow = 1, m_ProfilerPinned = -1;
+		std::unordered_set<std::string> m_ProfilerCollapsed; // le righe chiuse della tabella CPU, per percorso
 		bool m_HudClicked = false; // un clic sull'HUD apre il profiler e non fa picking
 		bool m_ResetLayout = false;
 		// Il materiale aperto nella sezione Material: quello cliccato nel pannello, o quello
