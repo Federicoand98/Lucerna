@@ -28,6 +28,7 @@ void UpdateAOVs(ivec2 texelCoord, ivec2 imageResultSize) {
         vec2 ndcCenter = (vec2(texelCoord) + 0.5) / vec2(imageResultSize) * 2.0 - 1.0;
         Ray aovRay = CalculateRayFromCamera(inverseProjection, inverseView, cameraPosition, ndcCenter);
         HitInfo aovHit = TraceRay(aovRay, 0.0);
+        imageStore(imgObjectId, texelCoord, uvec4(aovHit.HitDistance > 0.0 ? EncodeObjectId(aovHit.ObjectType, aovHit.ObjectIndex) : 0u));
         if(aovHit.HitDistance > 0.0) {
             Material aovMat = Materials[clamp(aovHit.MaterialIndex, 0, numMaterials - 1)];
             vec3 aovPos = aovRay.Origin + aovRay.Direction * aovHit.HitDistance;

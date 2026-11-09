@@ -8,12 +8,29 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(binding = 0) uniform sampler2D imgIn;
 layout(rgba8, binding = 1) uniform restrict writeonly image2D imgOut;
+// l'oggetto di ogni pixel, alla risoluzione della render (vedi EncodeObjectId nel path tracer)
+layout(r32ui, binding = 2) uniform restrict readonly uimage2D imgObjectId;
+
+const int MAX_SELECTED = 8; // un box sono 6 quad
 
 layout(push_constant) uniform Params {
     float Exposure;
     int   PostProcessing;
     int   aovView;   // 0 = beauty (tonemap normale); != 0 = vista AOV (niente esposizione/ACES)
+    int   selectedCount;
+    uint  selected[MAX_SELECTED]; // gli id della selezione: il contorno segue i loro pixel
 };
+
+bool IsSelected(ivec2 texel, ivec2 size, ivec2 idSize) {
+    texel = clamp(texel, ivec2(0), size - 1);
+    // la render puo' essere piu' piccola del display (render scale): si legge il suo texel
+    ivec2 idTexel = min(ivec2((vec2(texel) + 0.5) * vec2(idSize) / vec2(size)), idSize - 1);
+    uint id = imageLoad(imgObjectId, idTexel).r;
+    for(int i = 0; i < selectedCount; i++)
+        if(id != 0u && id == selected[i])
+            return true;
+    return false;
+}
 
 vec3 LinearToSRGB(vec3 rgb, float gamma) {
     rgb = clamp(rgb, 0.0, 1.0);
@@ -47,5 +64,19 @@ void main() {
 
     // Encoding sRGB SEMPRE: l'immagine non e' sRGB e ImGui non converte. Senza tonemap i valori
     // > 1 vengono troncati da LinearToSRGB (clipping atteso: e' cosa vuol dire "niente tonemap").
-    imageStore(imgOut, texel, vec4(LinearToSRGB(color, 2.4), 1.0));
+    vec3 display = LinearToSRGB(color, 2.4);
+
+    // Il contorno della selezione: un pixel di bordo e' uno i cui vicini 3x3 non sono tutti dalla
+    // stessa parte. Ne escono 2 pixel, uno dentro e uno fuori dalla sagoma.
+    if(selectedCount > 0) {
+        ivec2 idSize = imageSize(imgObjectId);
+        bool center = IsSelected(texel, size, idSize);
+        bool edge = false;
+        for(int dy = -1; dy <= 1 && !edge; dy++)
+            for(int dx = -1; dx <= 1 && !edge; dx++)
+                edge = IsSelected(texel + ivec2(dx, dy), size, idSize) != center;
+        if(edge)
+            display = vec3(1.0, 0.7098, 0.2784); // Theme::Accent #ffb547, gia' in sRGB
+    }
+    imageStore(imgOut, texel, vec4(display, 1.0));
 }

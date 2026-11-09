@@ -19,7 +19,11 @@ namespace Lucerna {
 			float Exposure;
 			int PostProcessing;
 			int AovView;
+			int SelectedCount;
+			uint32_t Selected[Renderer::MaxSelectedIds];
 		};
+
+		static_assert(sizeof(TonemapParams) == 48, "TonemapParams deve combaciare con le push constant di Tonemap.comp");
 
 		constexpr VkImageUsageFlags TARGET_USAGE = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	}
@@ -41,6 +45,10 @@ namespace Lucerna {
 			replace(m_NormalDepth[i]);
 			replace(m_Irradiance[i]);
 		}
+		GpuImage old = m_ObjectIds;
+		vk.Defer([old]() mutable { VulkanContext::Get().DestroyImage(old); });
+		m_ObjectIds = vk.CreateImage(VK_FORMAT_R32_UINT, width, height, VK_IMAGE_USAGE_STORAGE_BIT, MemoryCategory::RenderTargets);
+		vk.TransitionToGeneral(m_ObjectIds);
 
 		// Guard: OnResize gira prima di Initialize, quando il denoiser non esiste ancora.
 		if (m_Denoiser)
@@ -100,7 +108,7 @@ namespace Lucerna {
 		m_Denoiser = std::make_unique<Denoiser>();
 		m_Denoiser->Resize(m_Width, m_Height); // OnResize ha gia' fissato m_Width/m_Height
 		m_Tonemap = std::make_unique<ComputePipeline>(ShaderPath("Tonemap.spv"),
-			std::vector<VkDescriptorType>{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE },
+			std::vector<VkDescriptorType>{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE },
 			static_cast<uint32_t>(sizeof(TonemapParams)));
 	}
 
@@ -213,7 +221,7 @@ namespace Lucerna {
 			GpuScope scope(cmd, "Path tracer");
 			m_RaysPending = m_CountRays;
 			m_RaysPixels = m_RenderW * m_RenderH;
-			m_PathTracer->Dispatch(cmd, container, { m_RenderedImage, m_AlbedoAOV, m_NormalDepth[cur], m_Irradiance[cur], m_NormalDepth[prev], m_Irradiance[prev] });
+			m_PathTracer->Dispatch(cmd, container, { m_RenderedImage, m_AlbedoAOV, m_NormalDepth[cur], m_Irradiance[cur], m_NormalDepth[prev], m_Irradiance[prev], m_ObjectIds });
 		}
 		ComputeBarrier(cmd);
 
@@ -245,9 +253,12 @@ namespace Lucerna {
 
 		{
 			GpuScope scope(cmd, "Tonemap");
-			const TonemapParams tonemap = { Settings.Exposure, Settings.Tonemap ? 1 : 0, View.AOVView };
+			TonemapParams tonemap = { Settings.Exposure, Settings.Tonemap ? 1 : 0, View.AOVView, 0, {} };
+			for (uint32_t id : m_SelectedIds)
+				if (tonemap.SelectedCount < MaxSelectedIds)
+					tonemap.Selected[tonemap.SelectedCount++] = id;
 			m_Tonemap->Bind(cmd);
-			m_Tonemap->Sampler(0, *source, m_DisplaySampler, VK_IMAGE_LAYOUT_GENERAL).Image(1, m_Display).Commit(cmd);
+			m_Tonemap->Sampler(0, *source, m_DisplaySampler, VK_IMAGE_LAYOUT_GENERAL).Image(1, m_Display).Image(2, m_ObjectIds).Commit(cmd);
 			m_Tonemap->PushConstants(cmd, &tonemap, sizeof(tonemap));
 			vkCmdDispatch(cmd, (m_Width + 7) / 8, (m_Height + 7) / 8, 1);
 		}
@@ -347,7 +358,7 @@ namespace Lucerna {
 		m_Scene.reset();
 		m_Denoiser.reset();
 		m_Tonemap.reset();
-		for (GpuImage* image : { &m_RenderedImage, &m_AlbedoAOV, &m_NormalDepth[0], &m_NormalDepth[1], &m_Irradiance[0], &m_Irradiance[1], &m_Display })
+		for (GpuImage* image : { &m_RenderedImage, &m_AlbedoAOV, &m_NormalDepth[0], &m_NormalDepth[1], &m_Irradiance[0], &m_Irradiance[1], &m_Display, &m_ObjectIds })
 			vk.DestroyImage(*image);
 		if (m_DisplaySampler != VK_NULL_HANDLE)
 			vkDestroySampler(vk.Device(), m_DisplaySampler, nullptr);

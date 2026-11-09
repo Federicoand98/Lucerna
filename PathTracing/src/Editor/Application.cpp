@@ -1487,8 +1487,8 @@ namespace Lucerna {
 		return label;
 	}
 
-	// Etichetta a schermo + contorno dell'AABB: feedback immediato su cosa e' selezionato,
-	// utile perche' il gizmo da solo puo' finire fuori vista (es. la sfera-terreno).
+	// Il contorno degli oggetti lo disegna il tonemap dall'immagine di id. Qui restano il
+	// pivot e, per le luci punto e spot, che nessun raggio colpisce, l'AABB e la direzione.
 	void Application::DrawSelectionOverlay() {
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 
@@ -1519,7 +1519,7 @@ namespace Lucerna {
 
 		for (const auto& edge : edges) {
 			// se un estremo sta dietro la camera lo spigolo andrebbe clippato: lo saltiamo
-			if (visible[edge[0]] && visible[edge[1]])
+			if (m_Selection.Type == SelectionType::Light && visible[edge[0]] && visible[edge[1]])
 				drawList->AddLine(corners[edge[0]], corners[edge[1]], accent, 1.5f);
 		}
 
@@ -1811,6 +1811,24 @@ namespace Lucerna {
 		}
 		m_Camera.OnResize(width, height);
 		m_Renderer.OnResize(width, height);
+
+		// il contorno della selezione: gli id che lo shader scrive per i pixel dell'oggetto
+		std::vector<uint32_t> selected;
+		if (m_Selection.IsValid()) {
+			const int index = SelectedIndex();
+			switch (m_Selection.Type) {
+			case SelectionType::Sphere: case SelectionType::Quad: case SelectionType::Mesh:
+				selected.push_back(Renderer::ObjectIdOf(static_cast<int>(m_Selection.Type), index));
+				break;
+			case SelectionType::Box: // lo shader vede i 6 quad del box
+				for (int face = 0; face < 6; face++)
+					selected.push_back(Renderer::ObjectIdOf(static_cast<int>(SelectionType::Quad), static_cast<int>(m_Scene.Boxes()[index].index) + face));
+				break;
+			default: // le luci punto e spot non hanno pixel: hanno il loro overlay
+				break;
+			}
+		}
+		m_Renderer.SetSelection(std::move(selected));
 		m_Renderer.Render(m_Camera.GetRenderView(), m_Scene, m_Assets);
 	}
 

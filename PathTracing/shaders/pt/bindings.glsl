@@ -116,3 +116,12 @@ layout(binding = 19) uniform sampler2DArray DataTextures; // normal map e alpha 
 layout(std430, binding = 20) restrict buffer RayCounterBuffer {
     uint rayCount;
 };
+
+// L'oggetto colpito dal raggio primario di ogni pixel, per il contorno della selezione nel
+// tonemap: (tipo + 1) << 24 | indice, 0 = niente. Come il picking: le sfere e i quad per indice,
+// le mesh per istanza. Si scrive insieme agli AOV, quindi solo quando la vista cambia.
+layout(r32ui, binding = 21) uniform restrict writeonly uimage2D imgObjectId;
+
+uint EncodeObjectId(int type, int index) {
+    return type < 0 || index < 0 ? 0u : (uint(type + 1) << 24) | uint(index);
+}

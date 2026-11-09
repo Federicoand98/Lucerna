@@ -33,6 +33,12 @@ namespace Lucerna {
 		// la risoluzione di render mentre ci si muove (piu' fluido), tornando a piena
 		// risoluzione da fermi. Vedi Render().
 		void SetInteracting(bool interacting) { m_Interacting = interacting; }
+		// La selezione da contornare: gli id di ObjectIdOf (un box sono i suoi 6 quad). Il tonemap la
+		// disegna dall'immagine di id, quindi cambiarla non tocca il path tracer.
+		static constexpr int MaxSelectedIds = 8;
+		static uint32_t ObjectIdOf(int type, int index) { return type < 0 || index < 0 ? 0u : (uint32_t(type + 1) << 24) | uint32_t(index); }
+		void SetSelection(std::vector<uint32_t> ids) { m_SelectedIds = std::move(ids); }
+
 		// Il profiler e' aperto: il path tracer conta le sue ray query (issue #36)
 		void SetCountRays(bool count) { m_CountRays = count; }
 
@@ -77,6 +83,8 @@ namespace Lucerna {
 		// NormalDepth impacchetta normale (rgb) e profondita' (a). Irradiance porta N nell'alpha.
 		GpuImage m_NormalDepth[2];
 		GpuImage m_Irradiance[2];
+		GpuImage m_ObjectIds; // R32_UINT: l'oggetto del raggio primario, scritto con gli AOV
+		std::vector<uint32_t> m_SelectedIds;
 		int m_Ping = 0;
 
 		GpuImage m_Display;       // RGBA8 tonemappata, mostrata da ImGui

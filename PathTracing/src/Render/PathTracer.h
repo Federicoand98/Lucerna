@@ -68,6 +68,7 @@ namespace Lucerna {
 		const GpuImage& Irradiance;
 		const GpuImage& NormalDepthPrev;
 		const GpuImage& IrradiancePrev;
+		const GpuImage& ObjectIds; // l'oggetto di ogni pixel, per il contorno della selezione
 	};
 
 	class PathTracer {
