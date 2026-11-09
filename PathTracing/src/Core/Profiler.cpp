@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 
 namespace Lucerna {
@@ -126,7 +127,15 @@ namespace Lucerna {
 			m_ScopeParents.push_back(parent);
 		}
 		current.Cpu.push_back({ std::string(name), static_cast<int>(m_OpenScopes.size()), 0.0f, found->second });
-		m_OpenScopes.push_back({ current.Cpu.size() - 1, NowMs() });
+		const double now = NowMs();
+		size_t loadIndex = SIZE_MAX;
+		if (m_Loading) {
+			// la profondita' conta solo gli scope aperti che fanno parte della cattura: uno scope
+			// aperto prima (la UI da cui si e' scelto il file) non e' una fase
+			loadIndex = m_Load.Phases.size();
+			m_Load.Phases.push_back({ std::string(name), m_LoadOpenPhases++, static_cast<float>(now - m_LoadStart), -1.0f });
+		}
+		m_OpenScopes.push_back({ current.Cpu.size() - 1, now, loadIndex });
 		return true;
 	}
 
@@ -135,8 +144,13 @@ namespace Lucerna {
 			return;
 		const OpenScope open = m_OpenScopes.back();
 		m_OpenScopes.pop_back();
+		const float ms = static_cast<float>(NowMs() - open.Start);
 		if (open.Index < m_Current.Cpu.size())
-			m_Current.Cpu[open.Index].Ms = static_cast<float>(NowMs() - open.Start);
+			m_Current.Cpu[open.Index].Ms = ms;
+		if (m_Loading && open.LoadIndex < m_Load.Phases.size()) {
+			m_Load.Phases[open.LoadIndex].Ms = ms;
+			m_LoadOpenPhases--;
+		}
 	}
 
 	void Profiler::BeginFrame() {
@@ -174,6 +188,43 @@ namespace Lucerna {
 		m_History.push_back(std::move(record));
 		if (m_History.size() > Capacity)
 			m_History.pop_front();
+	}
+
+	void Profiler::BeginLoad(std::string label) {
+		m_Load = {};
+		m_Load.Label = std::move(label);
+		m_LoadStart = NowMs();
+		m_LoadOpenPhases = 0;
+		// gli scope gia' aperti di una cattura sostituita non sono fasi di questa
+		for (OpenScope& open : m_OpenScopes)
+			open.LoadIndex = SIZE_MAX;
+		m_Loading = true;
+		m_LoadSynced = false;
+	}
+
+	bool Profiler::FramePresented() {
+		if (!m_Loading || !m_LoadSynced)
+			return false;
+		m_Loading = false;
+		m_Load.TotalMs = static_cast<float>(NowMs() - m_LoadStart);
+
+		// Restano le fasi chiuse e lunghe: quelle brevi sono il resto dei frame in mezzo (la UI,
+		// gli eventi). Una figlia non dura piu' della madre, quindi l'albero resta intero.
+		std::vector<LoadPhase> kept;
+		float lastEnd = 0.0f;
+		for (LoadPhase& phase : m_Load.Phases)
+			if (phase.Ms >= MinPhaseMs) {
+				if (phase.Depth == 0)
+					lastEnd = std::max(lastEnd, phase.StartMs + phase.Ms);
+				kept.push_back(std::move(phase));
+			}
+		// quello che resta fino al present: il primo frame con la scena nuova
+		if (m_Load.TotalMs - lastEnd >= MinPhaseMs)
+			kept.push_back({ "First frame", 0, lastEnd, m_Load.TotalMs - lastEnd });
+		m_Load.Phases = std::move(kept);
+		m_LastLoad = std::move(m_Load);
+		m_Load = {};
+		return true;
 	}
 
 	void Profiler::Reset() {

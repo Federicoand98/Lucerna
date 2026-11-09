@@ -13,7 +13,9 @@
 #include "Core/Profiler.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -131,6 +133,39 @@ int main() {
 		profiler.BeginFrame();
 		profiler.AttachFrameGpu({});
 		CHECK(profiler.History().back().Cpu.size() == Profiler::MaxScopes);
+		profiler.Reset();
+
+		// caricamenti: aperti dentro uno scope (il menu), chiusi dal primo present dopo il Sync
+		using namespace std::chrono_literals;
+		profiler.BeginFrame();
+		{
+			PROFILE_SCOPE("UI");
+			profiler.BeginLoad("scene.json");
+			PROFILE_SCOPE("Read scene file");
+			std::this_thread::sleep_for(3ms);
+			{ PROFILE_SCOPE("too short"); }
+		}
+		CHECK(!profiler.FramePresented() && profiler.Loading()); // il Sync non c'e' ancora stato
+		profiler.BeginFrame();
+		{
+			PROFILE_SCOPE("Renderer");
+			PROFILE_SCOPE("RenderScene.Sync");
+			std::this_thread::sleep_for(3ms);
+		}
+		profiler.LoadSynced();
+		CHECK(profiler.FramePresented() && !profiler.Loading());
+		const LoadCapture& load = profiler.LastLoad();
+		CHECK(load.Label == "scene.json" && load.TotalMs >= 6.0f);
+		CHECK(load.Phases.size() >= 3 && load.Phases[0].Name == "Read scene file" && load.Phases[0].Depth == 0);
+		CHECK(load.Phases.size() >= 3 && load.Phases[1].Name == "Renderer" && load.Phases[1].Depth == 0);
+		CHECK(load.Phases.size() >= 3 && load.Phases[2].Name == "RenderScene.Sync" && load.Phases[2].Depth == 1);
+		CHECK(std::none_of(load.Phases.begin(), load.Phases.end(), [](const LoadPhase& p) { return p.Name == "too short" || p.Name == "UI"; }));
+		CHECK(!profiler.FramePresented()); // gia' chiuso
+
+		profiler.BeginLoad("broken.obj"); // un caricamento fallito non sostituisce l'ultimo
+		profiler.CancelLoad();
+		profiler.LoadSynced();
+		CHECK(!profiler.FramePresented() && profiler.LastLoad().Label == "scene.json");
 		profiler.Reset();
 	}
 

@@ -125,6 +125,8 @@ namespace Lucerna {
 			PROFILE_SCOPE("RenderScene.Sync");
 			m_Scene->Sync(scene, assets, changes);
 		}
+		if (changes != NoChange)
+			Profiler::Get().LoadSynced(); // un caricamento in corso finisce col present di questo frame
 		PROFILE_SCOPE("Record commands");
 		if (changes != NoChange || AccumulationKey(Settings, View) != AccumulationKey(m_LastSettings, m_LastView))
 			RestartAccumulation();

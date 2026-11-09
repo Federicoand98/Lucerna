@@ -2,6 +2,7 @@
 // del suo MTL come slot, e un'istanza.
 
 #include "Import/Importer.h"
+#include "Core/Profiler.h"
 #include "Import/Model.h"
 
 namespace Lucerna {
@@ -68,6 +69,7 @@ namespace Lucerna {
 		}
 
 		void CopyGeometry(const Model& model, MeshAsset& asset) {
+			PROFILE_SCOPE("Copy into the asset");
 			asset.Triangles.clear();
 			asset.LocalMin = glm::vec4(1e30f);
 			asset.LocalMax = glm::vec4(-1e30f);

@@ -214,6 +214,126 @@ namespace Lucerna {
 		ImGui::DockBuilderFinish(ImGui::DockNodeGetRootNode(viewport->DockNode)->ID);
 	}
 
+	// La tab Loading: l'ultimo caricamento come albero di fasi, con quando comincia ognuna, quanto
+	// dura e una barra sulla linea del tempo del caricamento
+	void Application::DrawLoadingTab() {
+		const float s = UI::Scale();
+		const Profiler& profiler = Profiler::Get();
+		const LoadCapture& load = profiler.LastLoad();
+		if (load.Label.empty()) {
+			ImGui::TextDisabled(profiler.Loading() ? "Loading..." : "No load captured yet. Open a scene or a file to see where its time goes.");
+			return;
+		}
+
+		PROFILE_SCOPE("Loading tab");
+		ImGui::AlignTextToFramePadding();
+		ImGui::PushFont(UI::BoldFont());
+		ImGui::TextUnformatted("Last load");
+		ImGui::PopFont();
+		ImGui::SameLine();
+		ImGui::PushFont(UI::MonoFont());
+		ImGui::TextColored(Theme::TextDim, "%s", std::filesystem::path(load.Label).lexically_normal().string().c_str());
+		char total[32];
+		snprintf(total, sizeof(total), "%.2f s", load.TotalMs / 1000.0f);
+		const char* suffix = "to the first frame";
+		ImGui::PopFont();
+		const float rightW = ImGui::CalcTextSize(suffix).x + ImGui::GetStyle().ItemSpacing.x;
+		ImGui::PushFont(UI::MonoFont());
+		ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - rightW - ImGui::CalcTextSize(total).x);
+		ImGui::TextUnformatted(total);
+		ImGui::PopFont();
+		ImGui::SameLine();
+		ImGui::TextColored(Theme::TextDim, "%s", suffix);
+		if (profiler.Loading()) {
+			ImGui::SameLine();
+			ImGui::TextColored(Theme::Accent, "  loading another...");
+		}
+
+		// i colori della linea del tempo seguono la fase di primo livello
+		const ImU32 palette[] = { Col(Theme::Rgb(0x6fd6b8)), Col(Theme::IconSky), Col(Theme::Accent), Col(Theme::Rgb(0xc3a6ff)),
+		                          Col(Theme::Rgb(0xff7f6b)), Col(Theme::Rgb(0xd9d9e0)) };
+		const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY;
+		ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
+		ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
+		if (ImGui::BeginTable("##load", 4, flags, ImVec2(0.0f, std::max(ImGui::GetContentRegionAvail().y, 80.0f * s)))) {
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableSetupColumn("Phase", ImGuiTableColumnFlags_WidthFixed, 380.0f * s);
+			ImGui::TableSetupColumn("Start", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+			ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 72.0f * s);
+			ImGui::TableSetupColumn("Timeline", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableHeadersRow();
+
+			std::vector<std::string> stack; // i percorsi degli antenati: la chiave per chiudere una riga
+			int collapsedDepth = -1, topLevel = -1;
+			for (size_t i = 0; i < load.Phases.size(); i++) {
+				const LoadPhase& phase = load.Phases[i];
+				stack.resize(phase.Depth);
+				const std::string key = "load/" + (stack.empty() ? phase.Name : stack.back() + "/" + phase.Name);
+				stack.push_back(key);
+				if (phase.Depth == 0)
+					topLevel++;
+				if (collapsedDepth >= 0 && phase.Depth > collapsedDepth)
+					continue;
+				collapsedDepth = -1;
+				const bool parent = i + 1 < load.Phases.size() && load.Phases[i + 1].Depth > phase.Depth;
+				const bool collapsed = parent && m_ProfilerCollapsed.count(key) > 0;
+				if (collapsed)
+					collapsedDepth = phase.Depth;
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::PushID(key.c_str());
+				ImGui::Indent(16.0f * s * phase.Depth);
+				const ImVec4 tone = phase.Depth == 0 ? Theme::Text : Theme::TextDim;
+				if (parent) {
+					const std::string label = std::string(collapsed ? ICON_CHEVRON_RIGHT " " : ICON_CHEVRON_DOWN " ") + phase.Name;
+					ImGui::PushStyleColor(ImGuiCol_Text, tone);
+					if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+						if (collapsed)
+							m_ProfilerCollapsed.erase(key);
+						else
+							m_ProfilerCollapsed.insert(key);
+					}
+					ImGui::PopStyleColor();
+				}
+				else {
+					ImGui::Dummy(ImVec2(ImGui::CalcTextSize(ICON_CHEVRON_DOWN " ").x, 0.0f));
+					ImGui::SameLine(0.0f, 0.0f);
+					ImGui::TextColored(tone, "%s", phase.Name.c_str());
+				}
+				ImGui::Unindent(16.0f * s * phase.Depth);
+				ImGui::PopID();
+
+				ImGui::PushFont(UI::MonoFont());
+				char start[24], time[24];
+				snprintf(start, sizeof(start), "%.2f s", phase.StartMs / 1000.0f);
+				if (phase.Ms >= 1000.0f)
+					snprintf(time, sizeof(time), "%.2f s", phase.Ms / 1000.0f);
+				else
+					snprintf(time, sizeof(time), "%.0f ms", phase.Ms);
+				ImGui::TableSetColumnIndex(1);
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(start).x);
+				ImGui::TextColored(Theme::TextDim, "%s", start);
+				ImGui::TableSetColumnIndex(2);
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(time).x);
+				ImGui::TextUnformatted(time);
+				ImGui::PopFont();
+
+				ImGui::TableSetColumnIndex(3);
+				const ImVec2 p = ImGui::GetCursorScreenPos();
+				const float w = ImGui::GetContentRegionAvail().x - 8.0f * s;
+				const float h = ImGui::GetTextLineHeight();
+				const float x0 = p.x + 8.0f * s + w * phase.StartMs / load.TotalMs;
+				const float x1 = std::max(x0 + 2.0f, x0 + w * phase.Ms / load.TotalMs);
+				const ImU32 color = palette[std::max(topLevel, 0) % std::size(palette)];
+				ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x0, p.y + h * 0.2f), ImVec2(x1, p.y + h * 0.8f), color, 2.0f * s);
+				ImGui::Dummy(ImVec2(w, h));
+			}
+			ImGui::EndTable();
+		}
+		ImGui::PopStyleColor(2);
+	}
+
 	void Application::DrawProfilerPanel() {
 		const float s = UI::Scale();
 		if (!m_ProfilerDockChecked)
@@ -238,8 +358,18 @@ namespace Lucerna {
 		if (profiler.Paused() && m_ProfilerFocused && ImGui::IsKeyPressed(ImGuiKey_Escape))
 			resume();
 
-		// ---- toolbar: le tab (Memory e Loading arrivano con #34 e #35), pausa, finestra
-		UI::Pill("Frame", true);
+		// ---- toolbar: le tab (Memory arriva con #34), e per Frame la pausa e la finestra
+		if (UI::Pill("Frame", m_ProfilerTab == 0))
+			m_ProfilerTab = 0;
+		ImGui::SameLine(0.0f, 2.0f * s);
+		if (UI::Pill("Loading", m_ProfilerTab == 1))
+			m_ProfilerTab = 1;
+		if (m_ProfilerTab == 1) {
+			ImGui::Separator();
+			DrawLoadingTab();
+			ImGui::End();
+			return;
+		}
 		if (profiler.Paused()) {
 			ImGui::SameLine();
 			ImGui::AlignTextToFramePadding();

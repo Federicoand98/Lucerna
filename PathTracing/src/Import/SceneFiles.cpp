@@ -1,4 +1,5 @@
 #include "Import/SceneFiles.h"
+#include "Core/Profiler.h"
 #include "Import/Importer.h"
 #include "Core/Paths.h"
 
@@ -7,6 +8,7 @@
 namespace Lucerna {
 
 	bool OpenFile(const std::string& file, Scene& scene, AssetLibrary& assets) {
+		PROFILE_SCOPE("Import \xc2\xb7 " + std::filesystem::path(file).filename().string());
 		const std::string path = CanonicalPath(file); // un modello e' lo stesso asset da qualunque path arrivi
 		const Importer* importer = FindImporter(path);
 		if (importer == nullptr) {
@@ -86,6 +88,7 @@ namespace Lucerna {
 
 		bool ok = true;
 		for (const auto& [file, missing] : byFile) {
+			PROFILE_SCOPE("Load geometry \xc2\xb7 " + std::filesystem::path(file).filename().string());
 			const Importer* importer = FindImporter(file);
 			if (importer == nullptr || !importer->LoadGeometry(file, missing)) {
 				std::cerr << "Geometria non trovata: " << file << std::endl;

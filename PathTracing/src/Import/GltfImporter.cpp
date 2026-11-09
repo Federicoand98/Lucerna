@@ -3,6 +3,7 @@
 // transform appiattita, e pbrMetallicRoughness -> Material come MaterialFromMtl fa con l'MTL.
 
 #include "Import/Importer.h"
+#include "Core/Profiler.h"
 
 #include <filesystem>
 #include <iostream>
@@ -179,6 +180,7 @@ namespace Lucerna {
 		}
 
 		cgltf_data* ParseGltf(const std::string& path) {
+			PROFILE_SCOPE("Parse glTF");
 			cgltf_options options{};
 			cgltf_data* data = nullptr;
 			if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success) {
@@ -369,6 +371,7 @@ namespace Lucerna {
 		bool LoadGeometry(const std::string& file, const std::vector<MeshAsset*>& assets) const override {
 			cgltf_data* data = ParseGltf(file);
 			bool ok = data != nullptr;
+			PROFILE_SCOPE("Read primitives");
 			for (MeshAsset* asset : assets) {
 				const MeshSource& source = asset->Source;
 				const bool found = data && source.Mesh >= 0 && source.Mesh < static_cast<int>(data->meshes_count)

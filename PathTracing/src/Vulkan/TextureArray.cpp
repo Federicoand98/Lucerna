@@ -1,5 +1,7 @@
 #include "Vulkan/TextureArray.h"
 #include "Core/Parallel.h"
+#include "Core/Profiler.h"
+#include <optional>
 #include <cmath>
 #include <cstring>
 #include "stb/stb_image.h"
@@ -76,6 +78,7 @@ namespace Lucerna {
 		// staging. Il log si scrive dopo, in ordine di layer, cosi' resta uguale da un avvio all'altro.
 		struct Outcome { int Width = 0, Height = 0; const char* Failure = nullptr; };
 		std::vector<Outcome> outcomes(paths.size());
+		std::optional<CpuScope> decodeScope(std::in_place, "Decode + resample \xc2\xb7 " + std::to_string(paths.size()) + " layers");
 		ParallelFor(paths.size(), [&](size_t layer) {
 			Outcome& outcome = outcomes[layer];
 			int channels = 0;
@@ -89,6 +92,7 @@ namespace Lucerna {
 			stbi_image_free(pixels);
 		});
 
+		decodeScope.reset();
 		for (size_t layer = 0; layer < paths.size(); layer++) {
 			const Outcome& outcome = outcomes[layer];
 			if (outcome.Failure)
@@ -101,6 +105,7 @@ namespace Lucerna {
 		stbi_set_flip_vertically_on_load(false);
 
 		const VkImage image = m_Image.Image;
+		std::optional<CpuScope> uploadScope(std::in_place, "Upload + mip chain");
 		vk.Immediate([&](VkCommandBuffer cmd) {
 			auto barrier = [&](uint32_t level, uint32_t count, VkImageLayout from, VkImageLayout to,
 			                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
@@ -147,7 +152,8 @@ namespace Lucerna {
 				        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 			barrier(levels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 			        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-		});
+		}, "Texture upload");
+		uploadScope.reset();
 
 		vk.DestroyBuffer(staging);
 	}

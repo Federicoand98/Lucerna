@@ -142,6 +142,7 @@ namespace Lucerna {
 	}
 
 	bool Application::Initialize(int width, int height) {
+		PROFILE_SCOPE("Window and Vulkan device"); // all'avvio fa parte del caricamento della prima scena
 		m_Width = width;
 		m_Height = height;
 
@@ -364,6 +365,13 @@ namespace Lucerna {
 			}
 
 			m_Vulkan.PresentFrame();
+			// il primo present con la scena nuova chiude la cattura del caricamento
+			if (Profiler::Get().FramePresented()) {
+				const LoadCapture& load = Profiler::Get().LastLoad();
+				char seconds[32];
+				snprintf(seconds, sizeof(seconds), "%.2f", load.TotalMs / 1000.0f);
+				std::cout << "Load: " << load.Label << " in " << seconds << " s to the first frame" << std::endl;
+			}
 
 			{
 				PROFILE_SCOPE("Captures");
@@ -403,8 +411,11 @@ namespace Lucerna {
 	// si sorveglia per il live-link: da qui in poi PollLiveLink lo riapre quando cambia.
 	bool Application::OpenDocument(const std::string& path) {
 		m_Selection = {};
-		if (!m_Document.Open(path, m_Scene, m_Assets, m_Renderer.Settings))
+		Profiler::Get().BeginLoad(path);
+		if (!m_Document.Open(path, m_Scene, m_Assets, m_Renderer.Settings)) {
+			Profiler::Get().CancelLoad();
 			return false;
+		}
 
 		m_CurrentScene = -1;
 		m_WatchPath.clear();
@@ -430,8 +441,11 @@ namespace Lucerna {
 	// in questo stesso frame e userebbe gli indici della scena vecchia.
 	bool Application::LoadBuiltinScene(int index) {
 		m_Selection = {};
-		if (!m_Document.OpenBuiltin(m_BuiltinScenes[index], m_Scene, m_Assets, m_Renderer.Settings))
+		Profiler::Get().BeginLoad(m_BuiltinScenes[index].Path);
+		if (!m_Document.OpenBuiltin(m_BuiltinScenes[index], m_Scene, m_Assets, m_Renderer.Settings)) {
+			Profiler::Get().CancelLoad();
 			return false;
+		}
 		m_CurrentScene = index;
 		m_WatchPath.clear(); // il live-link e' dei file importati
 		return true;

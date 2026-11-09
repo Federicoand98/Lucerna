@@ -1,4 +1,5 @@
 #include "Serialization/SceneSerializer.h"
+#include "Core/Profiler.h"
 
 #include "Scene/Scene.h"
 #include "Import/SceneFiles.h"
@@ -126,6 +127,7 @@ namespace Lucerna {
 		// si legge piu', lascia la scena corrente intatta invece che mezza sovrascritta.
 		json root;
 		try {
+			PROFILE_SCOPE("Read scene file");
 			file >> root;
 		}
 		catch (const std::exception& e) {

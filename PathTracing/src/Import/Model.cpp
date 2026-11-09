@@ -1,6 +1,9 @@
 #include "Import/Model.h"
 
 #include <charconv>
+#include <optional>
+
+#include "Core/Profiler.h"
 
 namespace Lucerna {
 
@@ -82,8 +85,12 @@ namespace Lucerna {
 			return;
 		}
 		std::string content(std::filesystem::file_size(filePath), '\0');
-		file.read(content.data(), static_cast<std::streamsize>(content.size()));
-		content.resize(static_cast<size_t>(file.gcount()));
+		{
+			PROFILE_SCOPE("Read file");
+			file.read(content.data(), static_cast<std::streamsize>(content.size()));
+			content.resize(static_cast<size_t>(file.gcount()));
+		}
+		std::optional<CpuScope> parseScope(std::in_place, "Parse OBJ");
 
 		int currentMaterial = -1; // materiale attivo dall'ultimo "usemtl"
 		std::vector<int> faceVertices, faceUVs;
@@ -156,6 +163,8 @@ namespace Lucerna {
 			}
 		}
 
+		parseScope.reset();
+		PROFILE_SCOPE("Triangles and normals");
 		MakeTriangles();
 		CalculateBoundingBox();
 		m_Vertices = {};

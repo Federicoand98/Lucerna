@@ -53,6 +53,23 @@ namespace Lucerna {
 		float GpuMs(std::string_view name) const; // 0 se la passata in questo frame non c'e'
 	};
 
+	// Una fase di un caricamento: uno scope CPU aperto mentre la cattura era aperta. StartMs e'
+	// dall'inizio del caricamento; Depth e' relativa a dove il caricamento e' cominciato.
+	struct LoadPhase {
+		std::string Name;
+		int Depth = 0;
+		float StartMs = 0.0f;
+		float Ms = 0.0f;
+	};
+
+	// Un caricamento, da quando si apre il file al primo frame presentato con la scena nuova: in
+	// mezzo ci sono frame interi, perche' texture e strutture di accelerazione si fanno nel Sync.
+	struct LoadCapture {
+		std::string Label;  // il file aperto
+		float TotalMs = 0.0f;
+		std::vector<LoadPhase> Phases; // in preordine; solo quelle da almeno MinPhaseMs
+	};
+
 	struct Summary {
 		float Min = 0.0f, Avg = 0.0f, P99 = 0.0f, Max = 0.0f;
 	};
@@ -89,6 +106,17 @@ namespace Lucerna {
 		// Gli scope CPU, attraverso PROFILE_SCOPE. Solo il thread che ha creato il profiler (il
 		// main thread) registra: Begin ritorna false altrove, o oltre MaxScopes in un giro, e
 		// allora End non va chiamata.
+		// I caricamenti (ADR 0023): l'Application apre la cattura dove comincia a caricare, il
+		// Renderer dice quando ha applicato la scena nuova, e il primo present dopo la chiude.
+		// Una cattura nuova sostituisce quella aperta; un caricamento fallito la annulla.
+		static constexpr float MinPhaseMs = 1.0f; // le fasi piu' brevi sono il resto dei frame
+		void BeginLoad(std::string label);
+		void CancelLoad() { m_Loading = false; }
+		void LoadSynced() { m_LoadSynced = m_Loading; }
+		bool FramePresented(); // true quando ha appena chiuso una cattura
+		bool Loading() const { return m_Loading; }
+		const LoadCapture& LastLoad() const { return m_LastLoad; }
+
 		static constexpr size_t MaxScopes = 512;
 		bool BeginScope(std::string_view name);
 		void EndScope();
@@ -114,6 +142,7 @@ namespace Lucerna {
 		struct OpenScope {
 			size_t Index;
 			double Start;
+			size_t LoadIndex; // la sua fase nella cattura aperta, o SIZE_MAX
 		};
 
 		std::thread::id m_MainThread = std::this_thread::get_id();
@@ -127,6 +156,11 @@ namespace Lucerna {
 		double m_CurrentStart = 0.0;
 		bool m_HasCurrent = false, m_HasPending = false;
 		bool m_Paused = false;
+
+		LoadCapture m_Load, m_LastLoad;
+		double m_LoadStart = 0.0;
+		int m_LoadOpenPhases = 0; // le fasi aperte adesso: la profondita' della prossima
+		bool m_Loading = false, m_LoadSynced = false;
 	};
 
 	// Misura il blocco in cui sta: PROFILE_SCOPE("RenderScene.Sync");
