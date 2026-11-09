@@ -161,7 +161,6 @@ namespace Lucerna {
 		const std::vector<const FrameRecord*> frames = LastFrames(window);
 		if (m_ProfilerPinned >= static_cast<int>(frames.size()))
 			m_ProfilerPinned = -1;
-		const bool pinned = m_ProfilerPinned >= 0;
 		auto resume = [&] { profiler.SetPaused(false); m_ProfilerPinned = -1; };
 		if (profiler.Paused() && m_ProfilerFocused && ImGui::IsKeyPressed(ImGuiKey_Escape))
 			resume();
@@ -171,7 +170,7 @@ namespace Lucerna {
 		if (profiler.Paused()) {
 			ImGui::SameLine();
 			ImGui::AlignTextToFramePadding();
-			if (pinned)
+			if (m_ProfilerPinned >= 0)
 				ImGui::TextColored(Theme::SelectedText, ICON_PAUSE " Paused \xc2\xb7 frame %d pinned", m_ProfilerPinned - static_cast<int>(frames.size()) + 1);
 			else
 				ImGui::TextColored(Theme::SelectedText, ICON_PAUSE " Paused");
@@ -278,6 +277,8 @@ namespace Lucerna {
 			ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 10.0f * s));
 		}
 
+		// Dopo la toolbar: Resume ed Esc tolgono il frame fissato in questo stesso frame
+		const bool pinned = m_ProfilerPinned >= 0;
 		const std::vector<PassKey> keys = PassKeys(frames);
 		const FrameRecord* pinnedFrame = pinned ? frames[m_ProfilerPinned] : nullptr;
 
