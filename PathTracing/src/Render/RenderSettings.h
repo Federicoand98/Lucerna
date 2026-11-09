@@ -79,7 +79,7 @@ namespace Lucerna {
 	// Cosa si sta guardando: non cambia mai l'immagine calcolata e non si salva.
 	struct ViewSettings {
 		int AOVView = 0;             // 0 = beauty, 1 = albedo, 2 = normal, 3 = depth, 4 = storia
-		bool PathTracing = true;     // false = niente accumulazione: ogni frame riparte da un campione
+		bool PathTracing = true;     // false = in pausa: l'accumulo resta com'e', riprende da li'
 		// true = la vista guarda attraverso la camera della scena e navigando la sposta;
 		// false = vista libera, l'inquadratura resta dov'e' (ADR 0011)
 		bool LockViewToCamera = true;

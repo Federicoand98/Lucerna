@@ -58,7 +58,6 @@ namespace Lucerna {
 		RenderSettings Settings; // come si calcola l'immagine: si salva con la scena (ADR 0010)
 		ViewSettings View;       // cosa si guarda: mai salvato
 	private:
-		void UpdateAccumulationCounter();
 		void ResizeRenderTargets(uint32_t width, uint32_t height); // colore + AOV, stessa risoluzione
 		void ResizeDisplay(uint32_t width, uint32_t height);
 		void ReadImage(const GpuImage& image, void* pixels, size_t bytes);

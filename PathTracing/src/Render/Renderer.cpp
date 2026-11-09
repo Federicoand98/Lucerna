@@ -190,6 +190,16 @@ namespace Lucerna {
 		glm::mat4 viewProjection = view.Projection * view.View;
 		bool aovNeedsUpdate = (viewProjection != m_PrevViewProjection) || m_PTCounter <= 1;
 
+		// In pausa l'accumulo resta com'e' e il path tracer non gira: denoiser e tonemap lavorano
+		// sull'ultimo frame, che dopo lo scambio degli indici sta in prev. Un cambiamento che
+		// invaliderebbe l'accumulo (modifica, camera, Reset) fa ripartire il rendering, altrimenti
+		// si guarderebbe un'immagine che non e' piu' la scena. Il picking traccia comunque un
+		// frame: e' un campione valido in piu'.
+		if (!View.PathTracing && (aovNeedsUpdate || m_Interacting))
+			View.PathTracing = true;
+		const bool paused = !View.PathTracing && !m_PickRequested;
+		const int last = paused ? prev : cur;
+
 		ComputeUniformContainer container = { static_cast<uint32_t>(m_PTCounter), static_cast<uint32_t>(Settings.SamplesPerPixel), static_cast<uint32_t>(Settings.RayDepth), Settings.FireflyClamp, scene.Camera().Aperture, scene.Camera().FocusDistance, View.AOVView, m_PrevViewProjection, m_PrevCameraPosition, aovNeedsUpdate, hasHistory, cameraMoved, Settings.HistoryCap, Settings.NEE, pickPixel, *m_Scene, m_View };
 
 		// Le scritture del frame scorso diventano visibili a questo, e il tonemap non deve
@@ -209,7 +219,8 @@ namespace Lucerna {
 		vkCmdResetQueryPool(cmd, m_Timestamps, 0, 4);
 		vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, m_Timestamps, 0);
 
-		m_PathTracer->Dispatch(cmd, container, { m_RenderedImage, m_AlbedoAOV, m_NormalDepth[cur], m_Irradiance[cur], m_NormalDepth[prev], m_Irradiance[prev] });
+		if (!paused)
+			m_PathTracer->Dispatch(cmd, container, { m_RenderedImage, m_AlbedoAOV, m_NormalDepth[cur], m_Irradiance[cur], m_NormalDepth[prev], m_Irradiance[prev] });
 
 		vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, m_Timestamps, 1);
 		m_TimestampsWritten = true;
@@ -238,7 +249,7 @@ namespace Lucerna {
 		m_DenoiseWritten = Settings.Denoise && View.AOVView == 0 && Settings.DenoiseStrength * minFade > 0.01f;
 		if (m_DenoiseWritten) {
 			vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, m_Timestamps, 2);
-			source = &m_Denoiser->Run(cmd, m_Irradiance[cur], m_RenderedImage, m_AlbedoAOV, m_NormalDepth[cur],
+			source = &m_Denoiser->Run(cmd, m_Irradiance[last], m_RenderedImage, m_AlbedoAOV, m_NormalDepth[last],
 			                          Settings.DenoiseStrength, Settings.DenoiseAutoFade, Settings.DenoiseCPhi, Settings.DenoiseNPhi, Settings.DenoisePPhi, Settings.DenoiseAPhi);
 			vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, m_Timestamps, 3);
 		}
@@ -262,20 +273,15 @@ namespace Lucerna {
 			vkCmdPipelineBarrier2(cmd, &dependency);
 		}
 
+		if (paused)
+			return;
+
 		// Il frame corrente diventa la storia del prossimo: si scambiano gli indici e si
 		// memorizza la camera con cui e' stato prodotto (serve a riproiettare e a validare).
 		m_Ping = 1 - m_Ping;
 		m_PrevViewProjection = view.Projection * view.View;
 		m_PrevCameraPosition = view.Position;
-
-		UpdateAccumulationCounter();
-	}
-
-	void Renderer::UpdateAccumulationCounter() {
-		if (View.PathTracing)
-			m_PTCounter++;
-		else
-			m_PTCounter = 1;
+		m_PTCounter++;
 	}
 
 	void Renderer::ReadImage(const GpuImage& image, void* pixels, size_t bytes) {
