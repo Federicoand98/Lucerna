@@ -257,7 +257,9 @@ namespace Lucerna {
 			m_SwapchainExtent.height = std::clamp(static_cast<uint32_t>(height), capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 		}
 
-		// Senza vsync si misura il costo reale delle passate: vedi PT_NOVSYNC.
+		// Senza vsync si misura il costo reale delle passate: vedi PT_NOVSYNC. Su Wayland i
+		// compositor non offrono IMMEDIATE: MAILBOX non aspetta il vblank e sostituisce l'immagine
+		// in coda, quindi va bene uguale.
 		VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
 		if (!m_Vsync) {
 			uint32_t count = 0;
@@ -265,7 +267,8 @@ namespace Lucerna {
 			std::vector<VkPresentModeKHR> modes(count);
 			vkGetPhysicalDeviceSurfacePresentModesKHR(m_PhysicalDevice, m_Surface, &count, modes.data());
 			for (VkPresentModeKHR mode : modes)
-				if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR)
+				if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR
+				    || (mode == VK_PRESENT_MODE_MAILBOX_KHR && presentMode != VK_PRESENT_MODE_IMMEDIATE_KHR))
 					presentMode = mode;
 		}
 
