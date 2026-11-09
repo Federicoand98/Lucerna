@@ -215,6 +215,15 @@ namespace Lucerna {
 		m_HasPending = false;
 	}
 
+	void Profiler::AttachRays(uint32_t rays, uint32_t pixels) {
+		m_Latest.Rays = rays;
+		m_Latest.Pixels = pixels;
+		if (!m_Paused && !m_History.empty()) {
+			m_History.back().Rays = rays;
+			m_History.back().Pixels = pixels;
+		}
+	}
+
 	void Profiler::Complete(FrameRecord record) {
 		m_Latest = record;
 		if (m_Paused)

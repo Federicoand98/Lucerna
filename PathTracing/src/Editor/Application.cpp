@@ -342,6 +342,7 @@ namespace Lucerna {
 
 			{
 				PROFILE_SCOPE("Renderer");
+				m_Renderer.SetCountRays(m_ShowProfiler);
 				Render(m_DeltaTime);
 			}
 

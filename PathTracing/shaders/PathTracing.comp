@@ -1,6 +1,7 @@
 #version 460 core
 
 #extension GL_EXT_ray_query : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
 
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -72,6 +73,14 @@ void main() {
     }
 
     value /= float(samplesPerPixel);
+
+    // Il contatore dei raggi del profiler: prima dei return delle viste di debug, quando picking,
+    // AOV e campioni sono gia' tracciati. Una somma per subgroup, poi un solo atomic.
+    if(countRays != 0) {
+        uint subgroupRays = subgroupAdd(raysTraced);
+        if(subgroupElect())
+            atomicAdd(rayCount, subgroupRays);
+    }
 
     // Rilettura degli AOV scritti prima del loop (vedi la nota sopra sulla liveness): da qui in
     // poi servono di nuovo, ma NON dovevano sopravvivere alla traversata dei rimbalzi.

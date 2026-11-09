@@ -60,6 +60,7 @@ layout(std140, binding = 8) uniform FrameParams {
     // dimensione non si puo' ricavare da .length().
     int numSpheres;       // quanti primitivi del BLAS procedurale sono sfere: i seguenti sono quad
     int numMaterials;
+    int countRays;        // 1 = il profiler e' aperto: le ray query si contano (issue #36)
 };
 
 layout(std430, binding = 9) restrict readonly buffer SpheresBuffer {
@@ -109,3 +110,9 @@ layout(binding = 18) uniform accelerationStructureEXT topLevel;
 // I normal map sono dati, non colore: un array a parte in formato UNORM, senza la decodifica
 // sRGB che l'array dell'albedo applica in hardware.
 layout(binding = 19) uniform sampler2DArray DataTextures; // normal map e alpha mask MTL
+
+// Il contatore delle ray query del frame, per il profiler: la CPU lo azzera e lo rilegge al frame
+// dopo, come il picking. Si scrive solo con countRays.
+layout(std430, binding = 20) restrict buffer RayCounterBuffer {
+    uint rayCount;
+};

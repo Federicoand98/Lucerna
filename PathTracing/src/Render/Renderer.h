@@ -33,6 +33,8 @@ namespace Lucerna {
 		// la risoluzione di render mentre ci si muove (piu' fluido), tornando a piena
 		// risoluzione da fermi. Vedi Render().
 		void SetInteracting(bool interacting) { m_Interacting = interacting; }
+		// Il profiler e' aperto: il path tracer conta le sue ray query (issue #36)
+		void SetCountRays(bool count) { m_CountRays = count; }
 
 		// Picking: si richiede un pixel, e il frame successivo il risultato e' pronto.
 		void RequestPick(int x, int y) { m_PickX = x; m_PickY = y; m_PickRequested = true; }
@@ -95,6 +97,8 @@ namespace Lucerna {
 		uint32_t m_Width = 0, m_Height = 0;
 		uint32_t m_RenderW = 0, m_RenderH = 0;  // risoluzione effettiva dell'ultimo dispatch
 		bool m_Interacting = false;
+		bool m_CountRays = false, m_RaysPending = false; // pending: il dispatch scorso ha contato
+		uint32_t m_RaysPixels = 0;
 		int m_PTCounter = 1;
 		// Le impostazioni del frame scorso: un cambio di quelle che toccano l'integratore riparte
 		RenderSettings m_LastSettings;

@@ -33,7 +33,8 @@ namespace Lucerna {
 		uint32_t EnvironmentMapping;
 		int NumSpheres;
 		int NumMaterials;
-		int Padding[2];
+		int CountRays;
+		int Padding;
 	};
 	static_assert(sizeof(FrameParams) == 336, "FrameParams deve combaciare con il layout std140 dello shader");
 
@@ -56,6 +57,7 @@ namespace Lucerna {
 		glm::ivec2 PickPixel;  // (-1,-1) = nessuna richiesta di picking
 		const RenderScene& Scene;   // cosa si guarda: l'unica scena che il path tracer legge
 		const RenderView& Camera;   // da dove si guarda
+		bool CountRays = false;     // il profiler e' aperto: le ray query si contano (issue #36)
 	};
 
 	// Immagini scritte dal path tracer in questo frame, piu' la storia in sola lettura.
@@ -77,10 +79,13 @@ namespace Lucerna {
 		void Dispatch(VkCommandBuffer cmd, const ComputeUniformContainer& container, const PathTracerTargets& targets);
 		// Il risultato del picking e' pronto solo a frame eseguito: va letto al frame dopo.
 		void ReadPickResult(int& objectType, int& objectIndex, float& distance) const;
+		// Le ray query del dispatch scorso: valido solo se quel dispatch le contava
+		uint32_t ReadRayCount() const;
 
 	private:
 		std::unique_ptr<ComputePipeline> m_Pipeline;
 		GpuBuffer m_Pick;   // host-visible: la CPU legge il risultato
+		GpuBuffer m_RayCounter; // host-visible: la CPU lo azzera prima del dispatch e lo legge dopo
 		GpuBuffer m_Frame;  // host-visible: parametri del frame
 	};
 }

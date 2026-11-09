@@ -41,6 +41,8 @@ namespace Lucerna {
 		float PresentMs = 0.0f;
 		std::vector<GpuTiming> Gpu; // le passate del frame, poi le build fatte in Immediate
 		std::vector<CpuTiming> Cpu; // gli scope del main thread, in preordine
+		uint32_t Rays = 0;          // le ray query del path tracer, col profiler aperto (0 = non contate)
+		uint32_t Pixels = 0;        // i pixel di quel dispatch: Rays / Pixels = raggi per pixel
 
 		// Dove la CPU si ferma dipende dal driver: NVIDIA aspetta la GPU dentro il present, non
 		// nella fence. Quindi l'attesa si divide per causa e non per chiamata: va alla GPU fino al
@@ -106,6 +108,9 @@ namespace Lucerna {
 		void AddPresent(float ms) { Current().PresentMs += ms; }
 		// Le passate del frame inviato nel giro prima: arrivano dopo la sua fence, e lo completano
 		void AttachFrameGpu(std::vector<GpuTiming> timings);
+		// Le ray query del dispatch del giro scorso: il Renderer le legge un frame dopo, quando quel
+		// giro e' gia' completo nello storico
+		void AttachRays(uint32_t rays, uint32_t pixels);
 		// Una build in Immediate: e' sincrona, quindi appartiene al giro in corso
 		void AddImmediateGpu(GpuTiming timing) { Current().Gpu.push_back(std::move(timing)); }
 

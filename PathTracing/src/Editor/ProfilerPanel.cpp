@@ -938,6 +938,57 @@ namespace Lucerna {
 				else
 					ImGui::TextDisabled("Averages over the last %zu frames. Click a bar to pin a frame.", frames.size());
 
+				// ---- il throughput: le ray query contate dallo shader sul tempo del path tracer
+				{
+					double rays = 0.0, pixels = 0.0, ptMs = 0.0;
+					size_t counted = 0;
+					auto add = [&](const FrameRecord& f) {
+						if (f.Rays == 0)
+							return;
+						rays += f.Rays;
+						pixels += f.Pixels;
+						ptMs += f.GpuMs("Path tracer");
+						counted++;
+					};
+					if (pinned)
+						add(*pinnedFrame);
+					else
+						for (const FrameRecord* f : frames)
+							add(*f);
+					ImGui::Spacing();
+					ImGui::PushFont(UI::BoldFont());
+					ImGui::TextUnformatted("Throughput");
+					ImGui::PopFont();
+					ImGui::SameLine();
+					if (counted == 0 || ptMs <= 0.0)
+						ImGui::TextDisabled("counting rays...");
+					else {
+						char text[96];
+						snprintf(text, sizeof(text), "%.0f", rays / ptMs / 1000.0);
+						ImGui::PushFont(UI::MonoFont());
+						ImGui::TextUnformatted(text);
+						ImGui::PopFont();
+						ImGui::SameLine(0.0f, 4.0f * s);
+						ImGui::TextColored(Theme::TextDim, "Mrays/s \xc2\xb7");
+						ImGui::SameLine();
+						snprintf(text, sizeof(text), "%.2f M", rays / counted / 1e6);
+						ImGui::PushFont(UI::MonoFont());
+						ImGui::TextUnformatted(text);
+						ImGui::PopFont();
+						ImGui::SameLine(0.0f, 4.0f * s);
+						ImGui::TextColored(Theme::TextDim, "rays/frame \xc2\xb7");
+						ImGui::SameLine();
+						snprintf(text, sizeof(text), "%.2f", rays / pixels);
+						ImGui::PushFont(UI::MonoFont());
+						ImGui::TextUnformatted(text);
+						ImGui::PopFont();
+						ImGui::SameLine(0.0f, 4.0f * s);
+						ImGui::TextColored(Theme::TextDim, "rays/pixel");
+						if (ImGui::IsItemHovered())
+							ImGui::SetTooltip("Every ray query of the path tracer: camera rays, bounces and NEE shadow rays");
+					}
+				}
+
 				// ---- la tabella degli scope CPU, ad albero
 				tableScope.emplace("CPU table");
 				ImGui::Spacing();

@@ -180,8 +180,13 @@ bool AlphaPasses(rayQueryEXT query) {
     return alpha >= material.AlphaCutoff;
 }
 
+// Le ray query di questa invocazione: TraceRay e Occluded le contano, main le somma nel
+// contatore del profiler. Contare sempre costa un'addizione; l'atomic c'e' solo con countRays.
+uint raysTraced = 0u;
+
 HitInfo TraceRay(Ray ray, float lod) {
     const float tMax = 100000.0;
+    raysTraced++;
     rayQueryEXT query;
     // Niente gl_RayFlagsOpaqueEXT: forzerebbe opache anche le geometrie mascherate. Le altre
     // restano opache per il loro flag e non arrivano mai qui come candidati.
@@ -221,6 +226,7 @@ HitInfo TraceRay(Ray ray, float lod) {
 // Shadow ray: c'e' un occlusore tra origin e la luce (entro maxDist)? Si ferma al primo.
 bool Occluded(vec3 origin, vec3 dir, float maxDist) {
     Ray ray = Ray(origin, dir, 0.0);
+    raysTraced++;
     rayQueryEXT query;
     rayQueryInitializeEXT(query, topLevel,
                           gl_RayFlagsTerminateOnFirstHitEXT,

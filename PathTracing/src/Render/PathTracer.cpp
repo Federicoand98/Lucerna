@@ -17,6 +17,7 @@ namespace Lucerna {
 			VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 			VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		};
 
 		// Layout del PickBuffer: due int + un float, tutti scalari 4 byte. La sentinella e' -2,
@@ -33,6 +34,9 @@ namespace Lucerna {
 		                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, MemoryCategory::SceneBuffers);
 		const PickData empty = { -2, -2, -1.0f };
 		memcpy(m_Pick.Mapped, &empty, sizeof(empty));
+		m_RayCounter = vk.CreateBuffer(sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, MemoryCategory::SceneBuffers);
+		memset(m_RayCounter.Mapped, 0, sizeof(uint32_t));
 
 		m_Pipeline = std::make_unique<ComputePipeline>(ShaderPath("PathTracing.spv"), BINDINGS);
 	}
@@ -40,6 +44,7 @@ namespace Lucerna {
 	PathTracer::~PathTracer() {
 		VulkanContext& vk = VulkanContext::Get();
 		vk.DestroyBuffer(m_Pick);
+		vk.DestroyBuffer(m_RayCounter);
 		vk.DestroyBuffer(m_Frame);
 	}
 
@@ -76,7 +81,10 @@ namespace Lucerna {
 		frame.EnvironmentMapping = scene.EnvironmentMapping() ? 1 : 0;
 		frame.NumSpheres = scene.NumSpheres();
 		frame.NumMaterials = scene.NumMaterials();
+		frame.CountRays = container.CountRays ? 1 : 0;
 		memcpy(m_Frame.Mapped, &frame, sizeof(frame));
+		if (container.CountRays)
+			memset(m_RayCounter.Mapped, 0, sizeof(uint32_t)); // il frame scorso l'ha gia' letto (Renderer)
 
 		m_Pipeline->Bind(cmd);
 		m_Pipeline->Image(0, targets.Output).Image(1, targets.Albedo).Image(2, targets.NormalDepth)
@@ -87,11 +95,18 @@ namespace Lucerna {
 			.Buffer(12, scene.TriPositions()).Buffer(13, scene.Meshes()).Buffer(14, scene.TriNormals()).Buffer(15, m_Pick)
 			.Buffer(16, scene.TriUVs()).Buffer(17, scene.Lights()).AccelerationStructure(18, scene.TopLevel())
 			.Sampler(19, scene.DataTextures().Image(), scene.DataTextures().Sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.Buffer(20, m_RayCounter)
 			.Commit(cmd);
 
 		// ceil: con risoluzioni non multiple di 8 (es. render scale) la divisione intera
 		// perderebbe i pixel di bordo. I thread in eccesso escono subito (bounds-guard nello shader).
 		vkCmdDispatch(cmd, (targets.Output.Width + 7) / 8, (targets.Output.Height + 7) / 8, 1);
+	}
+
+	uint32_t PathTracer::ReadRayCount() const {
+		uint32_t count = 0;
+		memcpy(&count, m_RayCounter.Mapped, sizeof(count));
+		return count;
 	}
 
 	void PathTracer::ReadPickResult(int& objectType, int& objectIndex, float& distance) const {

@@ -111,6 +111,12 @@ namespace Lucerna {
 
 		VkCommandBuffer cmd = VulkanContext::Get().Cmd();
 
+		// Come il picking: il contatore dei raggi del dispatch scorso si legge solo adesso
+		if (m_RaysPending) {
+			Profiler::Get().AttachRays(m_PathTracer->ReadRayCount(), m_RaysPixels);
+			m_RaysPending = false;
+		}
+
 		// Il dispatch del picking era nel frame scorso: solo ora il suo risultato e' leggibile.
 		if (m_PickPending) {
 			m_PathTracer->ReadPickResult(m_PickType, m_PickIndex, m_PickDistance);
@@ -202,8 +208,11 @@ namespace Lucerna {
 			vkCmdPipelineBarrier2(cmd, &dependency);
 		}
 
+		container.CountRays = m_CountRays;
 		if (!paused) {
 			GpuScope scope(cmd, "Path tracer");
+			m_RaysPending = m_CountRays;
+			m_RaysPixels = m_RenderW * m_RenderH;
 			m_PathTracer->Dispatch(cmd, container, { m_RenderedImage, m_AlbedoAOV, m_NormalDepth[cur], m_Irradiance[cur], m_NormalDepth[prev], m_Irradiance[prev] });
 		}
 		ComputeBarrier(cmd);
