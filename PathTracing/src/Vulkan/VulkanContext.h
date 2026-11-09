@@ -12,12 +12,35 @@ struct GLFWwindow;
 
 namespace Lucerna {
 
+	// A cosa serve un'allocazione GPU: la memoria si conta per categoria quando si alloca (ADR 0023).
+	// Una che resta in Other e' un'allocazione che ha dimenticato la sua.
+	enum class MemoryCategory : uint8_t {
+		Other, ColorTextures, DataTextures, Environment, TriangleBuffers, SceneBuffers,
+		Blas, Tlas, AccelScratch, RenderTargets, Staging, Count
+	};
+	const char* MemoryCategoryName(MemoryCategory category);
+
+	// La memoria dell'app per categoria, divisa tra l'heap della GPU e il resto (host-visible),
+	// e, se il driver ha VK_EXT_memory_budget, quanto ne usa davvero l'app e quanto puo' usarne.
+	struct MemoryReport {
+		VkDeviceSize Device[static_cast<size_t>(MemoryCategory::Count)] = {};
+		VkDeviceSize Host[static_cast<size_t>(MemoryCategory::Count)] = {};
+		VkDeviceSize HeapSize = 0;    // l'heap device-local piu' grande
+		bool HasBudget = false;
+		VkDeviceSize HeapBudget = 0;  // quanto puo' usarne l'app, tolti gli altri processi
+		VkDeviceSize HeapUsage = 0;   // quanto ne usa l'app, driver compreso
+		VkDeviceSize DeviceTotal() const;
+	};
+
 	struct GpuBuffer {
 		VkBuffer Buffer = VK_NULL_HANDLE;
 		VkDeviceMemory Memory = VK_NULL_HANDLE;
 		VkDeviceSize Size = 0;
 		void* Mapped = nullptr;      // solo per i buffer host-visible
 		VkDeviceAddress Address = 0; // solo con VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+		VkDeviceSize Allocated = 0;  // la memoria davvero allocata, con allineamento e padding
+		MemoryCategory Category = MemoryCategory::Other;
+		bool DeviceLocal = false;
 	};
 
 	struct GpuImage {
@@ -26,6 +49,9 @@ namespace Lucerna {
 		VkImageView View = VK_NULL_HANDLE;
 		VkFormat Format = VK_FORMAT_UNDEFINED;
 		uint32_t Width = 0, Height = 0, Layers = 1, Levels = 1;
+		VkDeviceSize Allocated = 0;
+		MemoryCategory Category = MemoryCategory::Other;
+		bool DeviceLocal = false;
 	};
 
 	/*
@@ -61,17 +87,19 @@ namespace Lucerna {
 
 		// Esegue comandi su un command buffer proprio e aspetta che finiscano. Con un nome, il
 		// loro tempo GPU va nel profiler come parte del frame in corso (le build dei BLAS).
-		void Immediate(const std::function<void(VkCommandBuffer)>& record, const char* gpuName = nullptr);
+		// Ritorna il tempo GPU in millisecondi quando ha un nome, 0 altrimenti.
+		float Immediate(const std::function<void(VkCommandBuffer)>& record, const char* gpuName = nullptr);
 
 		// Gli scope GPU del command buffer del frame (GpuScope): si leggono dopo la sua fence
 		GpuProfiler& FrameTimer() { return m_FrameTimer; }
 
-		GpuBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory);
+		GpuBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory,
+		                       MemoryCategory category = MemoryCategory::Other);
 		void DestroyBuffer(GpuBuffer& buffer);
 		void UploadBuffer(const GpuBuffer& destination, const void* data, VkDeviceSize size, VkDeviceSize offset = 0);
 
 		GpuImage CreateImage(VkFormat format, uint32_t width, uint32_t height, VkImageUsageFlags usage,
-		                     uint32_t layers = 1, uint32_t levels = 1, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
+		                     MemoryCategory category, uint32_t layers = 1, uint32_t levels = 1, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
 		// Le immagini di calcolo stanno sempre in GENERAL: bastano le barriere di memoria.
 		void TransitionToGeneral(const GpuImage& image);
 		void DestroyImage(GpuImage& image);
@@ -85,6 +113,7 @@ namespace Lucerna {
 		uint32_t SwapchainImageCount() const { return static_cast<uint32_t>(m_SwapchainImages.size()); }
 		const char* DeviceName() const { return m_DeviceProperties.deviceName; }
 		float TimestampPeriod() const { return m_DeviceProperties.limits.timestampPeriod; }
+		MemoryReport Memory() const; // i totali per categoria e, se c'e', il budget del driver
 
 	private:
 		bool CreateInstance(bool validation);
@@ -93,6 +122,8 @@ namespace Lucerna {
 		void CreateSwapchain();
 		void DestroySwapchainViews();
 		uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags properties) const;
+		bool IsDeviceLocal(uint32_t memoryType) const;
+		void Count(MemoryCategory category, bool deviceLocal, VkDeviceSize bytes, bool add);
 
 	private:
 		static VulkanContext* s_Instance;
@@ -124,6 +155,9 @@ namespace Lucerna {
 		VkSemaphore m_ImageAvailable = VK_NULL_HANDLE;
 		uint32_t m_ImageIndex = 0;
 		std::vector<std::function<void()>> m_Deferred;
+
+		MemoryReport m_Memory;       // i totali per categoria; il budget si legge in Memory()
+		bool m_HasMemoryBudget = false;
 
 		GpuProfiler m_FrameTimer;     // gli scope del frame, letti nel BeginFrame successivo
 		GpuProfiler m_ImmediateTimer; // uno scope per Immediate, letto subito dopo la sua fence

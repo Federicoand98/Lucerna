@@ -1,11 +1,45 @@
 #include "Core/Profiler.h"
 
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <psapi.h> // GetProcessMemoryInfo e' in kernel32 (K32GetProcessMemoryInfo) da Windows 7
+#endif
 #include <chrono>
 #include <cstdint>
 #include <cmath>
 
 namespace Lucerna {
+
+	ProcessMemoryInfo ProcessMemory() {
+		ProcessMemoryInfo info;
+#ifdef _WIN32
+		PROCESS_MEMORY_COUNTERS counters{};
+		if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
+			info.Resident = counters.WorkingSetSize;
+			info.Peak = counters.PeakWorkingSetSize;
+		}
+#else
+		// VmRSS e VmHWM (il picco) in kB
+		std::ifstream status("/proc/self/status");
+		std::string line;
+		while (std::getline(status, line)) {
+			std::istringstream fields(line);
+			std::string key;
+			size_t kb = 0;
+			fields >> key >> kb;
+			if (key == "VmRSS:")
+				info.Resident = kb * 1024;
+			else if (key == "VmHWM:")
+				info.Peak = kb * 1024;
+		}
+#endif
+		return info;
+	}
 
 	float FrameRecord::CpuWorkMs() const {
 		return std::max(0.0f, FrameMs - WaitMs());

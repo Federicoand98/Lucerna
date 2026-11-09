@@ -70,6 +70,12 @@ namespace Lucerna {
 		std::vector<LoadPhase> Phases; // in preordine; solo quelle da almeno MinPhaseMs
 	};
 
+	// La RAM del processo: residente adesso, e il massimo da quando e' partito. Zero dove non si sa.
+	struct ProcessMemoryInfo {
+		size_t Resident = 0, Peak = 0;
+	};
+	ProcessMemoryInfo ProcessMemory();
+
 	struct Summary {
 		float Min = 0.0f, Avg = 0.0f, P99 = 0.0f, Max = 0.0f;
 	};

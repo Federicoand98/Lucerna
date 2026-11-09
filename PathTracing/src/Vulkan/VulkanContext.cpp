@@ -39,6 +39,17 @@ namespace Lucerna {
 			VK_KHR_RAY_QUERY_EXTENSION_NAME,
 		};
 
+		bool HasExtension(VkPhysicalDevice device, const char* name) {
+			uint32_t count = 0;
+			vkEnumerateDeviceExtensionProperties(device, nullptr, &count, nullptr);
+			std::vector<VkExtensionProperties> available(count);
+			vkEnumerateDeviceExtensionProperties(device, nullptr, &count, available.data());
+			for (const VkExtensionProperties& extension : available)
+				if (strcmp(extension.extensionName, name) == 0)
+					return true;
+			return false;
+		}
+
 		bool HasDeviceExtensions(VkPhysicalDevice device) {
 			uint32_t count = 0;
 			vkEnumerateDeviceExtensionProperties(device, nullptr, &count, nullptr);
@@ -228,8 +239,13 @@ namespace Lucerna {
 		createInfo.pNext = &features;
 		createInfo.queueCreateInfoCount = 1;
 		createInfo.pQueueCreateInfos = &queueInfo;
-		createInfo.enabledExtensionCount = static_cast<uint32_t>(DEVICE_EXTENSIONS.size());
-		createInfo.ppEnabledExtensionNames = DEVICE_EXTENSIONS.data();
+		// VK_EXT_memory_budget e' facoltativa: senza, il profiler mostra solo i totali per categoria
+		std::vector<const char*> extensions = DEVICE_EXTENSIONS;
+		m_HasMemoryBudget = HasExtension(m_PhysicalDevice, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+		if (m_HasMemoryBudget)
+			extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+		createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+		createInfo.ppEnabledExtensionNames = extensions.data();
 
 		if (vkCreateDevice(m_PhysicalDevice, &createInfo, nullptr, &m_Device) != VK_SUCCESS) {
 			std::cout << "ERROR::VULKAN: vkCreateDevice fallita" << std::endl;
@@ -459,7 +475,7 @@ namespace Lucerna {
 			m_SwapchainDirty = true;
 	}
 
-	void VulkanContext::Immediate(const std::function<void(VkCommandBuffer)>& record, const char* gpuName) {
+	float VulkanContext::Immediate(const std::function<void(VkCommandBuffer)>& record, const char* gpuName) {
 		VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		vkBeginCommandBuffer(m_ImmediateCmd, &beginInfo);
@@ -491,10 +507,14 @@ namespace Lucerna {
 		vkQueueSubmit(m_Queue, 1, &submitInfo, m_ImmediateFence);
 		vkWaitForFences(m_Device, 1, &m_ImmediateFence, VK_TRUE, UINT64_MAX);
 		vkResetFences(m_Device, 1, &m_ImmediateFence);
+		float gpuMs = 0.0f;
 		if (gpuName)
-			for (GpuTiming& timing : m_ImmediateTimer.Collect())
+			for (GpuTiming& timing : m_ImmediateTimer.Collect()) {
+				gpuMs += timing.Ms;
 				Profiler::Get().AddImmediateGpu(std::move(timing));
+			}
 		vkResetCommandBuffer(m_ImmediateCmd, 0);
+		return gpuMs;
 	}
 
 	uint32_t VulkanContext::FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags properties) const {
@@ -507,9 +527,68 @@ namespace Lucerna {
 		return 0;
 	}
 
-	GpuBuffer VulkanContext::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory) {
+	const char* MemoryCategoryName(MemoryCategory category) {
+		switch (category) {
+		case MemoryCategory::ColorTextures: return "Color textures";
+		case MemoryCategory::DataTextures: return "Data textures";
+		case MemoryCategory::Environment: return "Environment";
+		case MemoryCategory::TriangleBuffers: return "Triangle buffers";
+		case MemoryCategory::SceneBuffers: return "Scene buffers";
+		case MemoryCategory::Blas: return "BLAS";
+		case MemoryCategory::Tlas: return "TLAS";
+		case MemoryCategory::AccelScratch: return "Build scratch";
+		case MemoryCategory::RenderTargets: return "Render targets";
+		case MemoryCategory::Staging: return "Staging";
+		default: return "Other";
+		}
+	}
+
+	VkDeviceSize MemoryReport::DeviceTotal() const {
+		VkDeviceSize total = 0;
+		for (VkDeviceSize bytes : Device)
+			total += bytes;
+		return total;
+	}
+
+	bool VulkanContext::IsDeviceLocal(uint32_t memoryType) const {
+		VkPhysicalDeviceMemoryProperties memory;
+		vkGetPhysicalDeviceMemoryProperties(m_PhysicalDevice, &memory);
+		return (memory.memoryHeaps[memory.memoryTypes[memoryType].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+	}
+
+	void VulkanContext::Count(MemoryCategory category, bool deviceLocal, VkDeviceSize bytes, bool add) {
+		VkDeviceSize& total = (deviceLocal ? m_Memory.Device : m_Memory.Host)[static_cast<size_t>(category)];
+		total = add ? total + bytes : total - std::min(total, bytes);
+	}
+
+	MemoryReport VulkanContext::Memory() const {
+		MemoryReport report = m_Memory;
+		VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT };
+		VkPhysicalDeviceMemoryProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 };
+		if (m_HasMemoryBudget)
+			properties.pNext = &budget;
+		vkGetPhysicalDeviceMemoryProperties2(m_PhysicalDevice, &properties);
+		// l'heap della GPU: il piu' grande tra quelli device-local
+		uint32_t heap = 0;
+		for (uint32_t i = 0; i < properties.memoryProperties.memoryHeapCount; i++) {
+			const VkMemoryHeap& candidate = properties.memoryProperties.memoryHeaps[i];
+			if ((candidate.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && candidate.size > report.HeapSize) {
+				report.HeapSize = candidate.size;
+				heap = i;
+			}
+		}
+		report.HasBudget = m_HasMemoryBudget;
+		if (m_HasMemoryBudget) {
+			report.HeapBudget = budget.heapBudget[heap];
+			report.HeapUsage = budget.heapUsage[heap];
+		}
+		return report;
+	}
+
+	GpuBuffer VulkanContext::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory, MemoryCategory category) {
 		GpuBuffer buffer;
 		buffer.Size = size;
+		buffer.Category = category;
 
 		VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 		bufferInfo.size = size;
@@ -529,6 +608,11 @@ namespace Lucerna {
 		allocInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, memory);
 		if (vkAllocateMemory(m_Device, &allocInfo, nullptr, &buffer.Memory) != VK_SUCCESS)
 			std::cout << "ERROR::VULKAN: allocazione di " << size << " byte fallita" << std::endl;
+		else {
+			buffer.Allocated = requirements.size;
+			buffer.DeviceLocal = IsDeviceLocal(allocInfo.memoryTypeIndex);
+			Count(category, buffer.DeviceLocal, buffer.Allocated, true);
+		}
 		vkBindBufferMemory(m_Device, buffer.Buffer, buffer.Memory, 0);
 
 		if (memory & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
@@ -547,12 +631,13 @@ namespace Lucerna {
 			return;
 		vkDestroyBuffer(m_Device, buffer.Buffer, nullptr);
 		vkFreeMemory(m_Device, buffer.Memory, nullptr);
+		Count(buffer.Category, buffer.DeviceLocal, buffer.Allocated, false);
 		buffer = GpuBuffer{};
 	}
 
 	void VulkanContext::UploadBuffer(const GpuBuffer& destination, const void* data, VkDeviceSize size, VkDeviceSize offset) {
 		GpuBuffer staging = CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, MemoryCategory::Staging);
 		memcpy(staging.Mapped, data, size);
 
 		Immediate([&](VkCommandBuffer cmd) {
@@ -564,8 +649,9 @@ namespace Lucerna {
 	}
 
 	GpuImage VulkanContext::CreateImage(VkFormat format, uint32_t width, uint32_t height, VkImageUsageFlags usage,
-	                                    uint32_t layers, uint32_t levels, VkImageViewType viewType) {
+	                                    MemoryCategory category, uint32_t layers, uint32_t levels, VkImageViewType viewType) {
 		GpuImage image;
+		image.Category = category;
 		image.Format = format;
 		image.Width = width;
 		image.Height = height;
@@ -594,6 +680,11 @@ namespace Lucerna {
 		allocInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		if (vkAllocateMemory(m_Device, &allocInfo, nullptr, &image.Memory) != VK_SUCCESS)
 			std::cout << "ERROR::VULKAN: allocazione immagine fallita" << std::endl;
+		else {
+			image.Allocated = requirements.size;
+			image.DeviceLocal = IsDeviceLocal(allocInfo.memoryTypeIndex);
+			Count(category, image.DeviceLocal, image.Allocated, true);
+		}
 		vkBindImageMemory(m_Device, image.Image, image.Memory, 0);
 
 		VkImageViewCreateInfo viewInfo{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
@@ -628,6 +719,7 @@ namespace Lucerna {
 		vkDestroyImageView(m_Device, image.View, nullptr);
 		vkDestroyImage(m_Device, image.Image, nullptr);
 		vkFreeMemory(m_Device, image.Memory, nullptr);
+		Count(image.Category, image.DeviceLocal, image.Allocated, false);
 		image = GpuImage{};
 	}
 

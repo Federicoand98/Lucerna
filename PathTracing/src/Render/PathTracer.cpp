@@ -28,9 +28,9 @@ namespace Lucerna {
 		VulkanContext& vk = VulkanContext::Get();
 
 		m_Frame = vk.CreateBuffer(sizeof(FrameParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-		                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, MemoryCategory::SceneBuffers);
 		m_Pick = vk.CreateBuffer(sizeof(PickData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-		                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, MemoryCategory::SceneBuffers);
 		const PickData empty = { -2, -2, -1.0f };
 		memcpy(m_Pick.Mapped, &empty, sizeof(empty));
 

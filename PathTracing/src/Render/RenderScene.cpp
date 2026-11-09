@@ -191,8 +191,8 @@ namespace Lucerna {
 	RenderScene::RenderScene() {
 		LoadEnvironment();
 		// anche senza texture va creato l'array: lo shader campiona sempre
-		m_AlbedoTextures.Load({});
-		m_DataTextures.Load({}, 1024, VK_FORMAT_R8G8B8A8_UNORM);
+		m_AlbedoTextures.Load({}, MemoryCategory::ColorTextures);
+		m_DataTextures.Load({}, MemoryCategory::DataTextures, 1024, VK_FORMAT_R8G8B8A8_UNORM);
 	}
 
 	RenderScene::~RenderScene() {
@@ -230,10 +230,10 @@ namespace Lucerna {
 
 		m_Environment = vk.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, size, size,
 		                               VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-		                               6, 1, VK_IMAGE_VIEW_TYPE_CUBE);
+		                               MemoryCategory::Environment, 6, 1, VK_IMAGE_VIEW_TYPE_CUBE);
 
 		GpuBuffer staging = vk.CreateBuffer(pixels.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, MemoryCategory::Staging);
 		memcpy(staging.Mapped, pixels.data(), pixels.size());
 
 		const VkImage image = m_Environment.Image;
@@ -273,14 +273,32 @@ namespace Lucerna {
 
 	// Un buffer vuoto non esiste in Vulkan: una collezione vuota tiene comunque un buffer minimo,
 	// e lo shader ne conosce la dimensione vera dai contatori in FrameParams.
-	void RenderScene::Upload(GpuBuffer& buffer, const void* data, size_t bytes) {
+	std::vector<MeshAccelRow> RenderScene::MeshAccel() const {
+		const AccelStats& stats = m_Accel.Stats();
+		std::vector<MeshAccelRow> rows;
+		for (size_t i = 0; i < m_AssetRanges.size() && i < stats.Meshes.size(); i++) {
+			MeshAccelRow row;
+			row.Name = m_AssetNames[i];
+			row.Instances = static_cast<int>(std::count(m_InstanceBlas.begin(), m_InstanceBlas.end(), static_cast<int>(i)));
+			row.Opaque = static_cast<uint32_t>(m_AssetRanges[i].NumOpaque);
+			row.Masked = static_cast<uint32_t>(m_AssetRanges[i].NumTriangles) - row.Opaque;
+			row.Size = stats.Meshes[i].Size;
+			row.Scratch = stats.Meshes[i].Scratch;
+			rows.push_back(std::move(row));
+		}
+		return rows;
+	}
+
+	void RenderScene::Upload(GpuBuffer& buffer, const void* data, size_t bytes, MemoryCategory category) {
 		VulkanContext& vk = VulkanContext::Get();
-		if (buffer.Size < std::max<size_t>(bytes, 16)) {
+		// anche piu' del doppio del necessario rialloca: una scena piccola dopo una grande (issue #34)
+		const VkDeviceSize needed = std::max<size_t>(bytes, 16);
+		if (buffer.Size < needed || buffer.Size > std::max<VkDeviceSize>(needed * 2, 1 << 20)) {
 			vk.DestroyBuffer(buffer);
 			buffer = vk.CreateBuffer(std::max<size_t>(bytes, 16),
 			                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
 			                         | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-			                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, category);
 		}
 		if (bytes > 0)
 			vk.UploadBuffer(buffer, data, bytes);
@@ -322,10 +340,10 @@ namespace Lucerna {
 			}
 			{
 				PROFILE_SCOPE("Color textures");
-				m_AlbedoTextures.Load(color);
+				m_AlbedoTextures.Load(color, MemoryCategory::ColorTextures);
 			}
 			PROFILE_SCOPE("Data textures");
-			m_DataTextures.Load(data, 1024, VK_FORMAT_R8G8B8A8_UNORM);
+			m_DataTextures.Load(data, MemoryCategory::DataTextures, 1024, VK_FORMAT_R8G8B8A8_UNORM);
 		}
 
 		if (changes & (GeometryChanged | InstancesChanged)) {
@@ -397,6 +415,7 @@ namespace Lucerna {
 		std::vector<TriangleNormal> normals;
 		std::vector<TriangleUV> uvs;
 		m_AssetRanges.clear();
+		m_AssetNames.clear();
 		m_AssetBlas.clear();
 		for (const auto& asset : assets.Meshes()) {
 			const auto used = fallback.find(asset.Id);
@@ -427,6 +446,7 @@ namespace Lucerna {
 			range.NumOpaque = static_cast<float>(opaqueEnd - order.begin());
 			m_AssetBlas[asset.Id] = static_cast<int>(m_AssetRanges.size());
 			m_AssetRanges.push_back(range);
+			m_AssetNames.push_back(asset.Name);
 
 			for (uint32_t i : order) {
 				const Triangle& t = asset.Triangles[i];
@@ -436,9 +456,9 @@ namespace Lucerna {
 				uvs.push_back({ glm::vec4(t.UVA, materialOf(t), 0.0f), glm::vec4(t.UVB, 0.0f, 0.0f), glm::vec4(t.UVC, 0.0f, 0.0f) });
 			}
 		}
-		Upload(m_TriPositions, positions.data(), sizeof(TrianglePosition) * positions.size());
-		Upload(m_TriNormals, normals.data(), sizeof(TriangleNormal) * normals.size());
-		Upload(m_TriUVs, uvs.data(), sizeof(TriangleUV) * uvs.size());
+		Upload(m_TriPositions, positions.data(), sizeof(TrianglePosition) * positions.size(), MemoryCategory::TriangleBuffers);
+		Upload(m_TriNormals, normals.data(), sizeof(TriangleNormal) * normals.size(), MemoryCategory::TriangleBuffers);
+		Upload(m_TriUVs, uvs.data(), sizeof(TriangleUV) * uvs.size(), MemoryCategory::TriangleBuffers);
 	}
 
 	void RenderScene::BuildMeshInfos(const Scene& scene, const AssetLibrary& assets) {

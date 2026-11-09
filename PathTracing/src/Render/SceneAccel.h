@@ -21,6 +21,21 @@ namespace Lucerna {
 	* I BLAS delle mesh dividono un solo buffer: con migliaia di mesh, un'allocazione a testa
 	* sforerebbe il limite di allocazioni del driver.
 	*/
+	// Quanto pesano le strutture costruite e quanto ci ha messo la GPU: le legge il profiler
+	struct AccelStats {
+		struct Mesh {
+			VkDeviceSize Size = 0, Scratch = 0;
+		};
+		std::vector<Mesh> Meshes; // nello stesso ordine degli asset passati a BuildMeshes
+		float MeshBuildMs = 0.0f; // i BLAS delle mesh si costruiscono tutti insieme
+		uint32_t Primitives = 0;
+		VkDeviceSize ProceduralSize = 0, ProceduralScratch = 0;
+		float ProceduralBuildMs = 0.0f;
+		uint32_t Instances = 0;
+		VkDeviceSize TlasSize = 0, TlasScratch = 0;
+		float TlasBuildMs = 0.0f;
+	};
+
 	class SceneAccel {
 	public:
 		SceneAccel();
@@ -35,6 +50,7 @@ namespace Lucerna {
 		void BuildTopLevel(const std::vector<MeshInfo>& meshes, const std::vector<int>& blas);
 
 		const VkAccelerationStructureKHR& TopLevel() const { return m_Tlas; }
+		const AccelStats& Stats() const { return m_Stats; }
 
 	private:
 		void DestroyMeshes();
@@ -54,6 +70,7 @@ namespace Lucerna {
 
 		GpuBuffer m_Scratch;
 		VkDeviceSize m_ScratchAlignment = 0;
+		AccelStats m_Stats;
 	};
 }
 

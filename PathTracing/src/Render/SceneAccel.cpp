@@ -47,12 +47,14 @@ namespace Lucerna {
 			return structure;
 		}
 
-		void EnsureBuffer(GpuBuffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory) {
-			if (buffer.Size >= size)
+		// Si rialloca quando non basta, e anche quando e' piu' del doppio del necessario: dopo una
+		// scena grande, una piccola non deve tenersi la memoria di quella (issue #34).
+		void EnsureBuffer(GpuBuffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory, MemoryCategory category) {
+			if (buffer.Size >= size && buffer.Size <= std::max<VkDeviceSize>(size * 2, 1 << 20))
 				return;
 			VulkanContext& vk = VulkanContext::Get();
 			vk.DestroyBuffer(buffer);
-			buffer = vk.CreateBuffer(size, usage, memory);
+			buffer = vk.CreateBuffer(size, usage, memory, category);
 		}
 	}
 
@@ -92,6 +94,8 @@ namespace Lucerna {
 
 		const size_t meshCount = meshes.size();
 		m_MeshBlas.assign(meshCount, VK_NULL_HANDLE);
+		m_Stats.Meshes.assign(meshCount, {});
+		m_Stats.MeshBuildMs = 0.0f;
 
 		// Fino a due geometrie per mesh, in quest'ordine: i triangoli opachi e quelli con un
 		// materiale mascherato (ADR 0008). Lo shader ricava l'indice del triangolo dall'indice
@@ -152,6 +156,7 @@ namespace Lucerna {
 
 			storageOffsets[i] = storageBytes;
 			storageSizes[i] = sizes.accelerationStructureSize;
+			m_Stats.Meshes[i] = { sizes.accelerationStructureSize, sizes.buildScratchSize };
 			storageBytes = AlignUp(storageBytes + sizes.accelerationStructureSize, 256); // allineamento richiesto dalle AS
 			scratchOffsets[i] = scratchBytes;
 			scratchBytes = AlignUp(scratchBytes + sizes.buildScratchSize, m_ScratchAlignment);
@@ -159,12 +164,14 @@ namespace Lucerna {
 			built.push_back(static_cast<uint32_t>(i));
 		}
 
-		if (built.empty())
+		if (built.empty()) {
+			vk.DestroyBuffer(m_MeshStorage); // nessuna mesh: il loro buffer non serve piu'
 			return;
+		}
 
-		EnsureBuffer(m_MeshStorage, storageBytes, STORAGE_USAGE, DEVICE_MEMORY);
+		EnsureBuffer(m_MeshStorage, storageBytes, STORAGE_USAGE, DEVICE_MEMORY, MemoryCategory::Blas);
 		EnsureBuffer(m_Scratch, scratchBytes + m_ScratchAlignment,
-		             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, DEVICE_MEMORY);
+		             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, DEVICE_MEMORY, MemoryCategory::AccelScratch);
 		const VkDeviceAddress scratchBase = AlignUp(m_Scratch.Address, m_ScratchAlignment);
 
 		std::vector<VkAccelerationStructureBuildGeometryInfoKHR> buildInfos;
@@ -177,9 +184,12 @@ namespace Lucerna {
 			rangePointers.push_back(ranges[i].data());
 		}
 
-		vk.Immediate([&](VkCommandBuffer cmd) {
+		m_Stats.MeshBuildMs = vk.Immediate([&](VkCommandBuffer cmd) {
 			Fn().CmdBuild(cmd, static_cast<uint32_t>(buildInfos.size()), buildInfos.data(), rangePointers.data());
 		}, "BLAS build");
+		// Lo scratch serve solo durante la build, e quello di tutti i BLAS insieme e' grande (162 MB
+		// su Bistro): si libera subito, la TLAS ne alloca uno suo piccolo.
+		vk.DestroyBuffer(m_Scratch);
 	}
 
 	void SceneAccel::BuildPrimitives(const std::vector<AABB>& bounds) {
@@ -197,7 +207,7 @@ namespace Lucerna {
 				aabbs[i] = { bounds[i].min.x, bounds[i].min.y, bounds[i].min.z, bounds[i].max.x, bounds[i].max.y, bounds[i].max.z };
 
 			const VkDeviceSize aabbBytes = aabbs.size() * sizeof(VkAabbPositionsKHR);
-			EnsureBuffer(m_Aabbs, aabbBytes, INPUT_USAGE | VK_BUFFER_USAGE_TRANSFER_DST_BIT, DEVICE_MEMORY);
+			EnsureBuffer(m_Aabbs, aabbBytes, INPUT_USAGE | VK_BUFFER_USAGE_TRANSFER_DST_BIT, DEVICE_MEMORY, MemoryCategory::SceneBuffers);
 			vk.UploadBuffer(m_Aabbs, aabbs.data(), aabbBytes);
 
 			VkAccelerationStructureGeometryKHR geometry{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
@@ -218,9 +228,12 @@ namespace Lucerna {
 			VkAccelerationStructureBuildSizesInfoKHR sizes{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
 			Fn().GetBuildSizes(vk.Device(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &info, &primitives, &sizes);
 
-			EnsureBuffer(m_ProceduralStorage, sizes.accelerationStructureSize, STORAGE_USAGE, DEVICE_MEMORY);
+			EnsureBuffer(m_ProceduralStorage, sizes.accelerationStructureSize, STORAGE_USAGE, DEVICE_MEMORY, MemoryCategory::Blas);
 			EnsureBuffer(m_Scratch, sizes.buildScratchSize + m_ScratchAlignment,
-			             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, DEVICE_MEMORY);
+			             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, DEVICE_MEMORY, MemoryCategory::AccelScratch);
+			m_Stats.Primitives = primitives;
+			m_Stats.ProceduralSize = sizes.accelerationStructureSize;
+			m_Stats.ProceduralScratch = sizes.buildScratchSize;
 
 			m_ProceduralBlas = CreateStructure(m_ProceduralStorage, 0, sizes.accelerationStructureSize, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR);
 			info.dstAccelerationStructure = m_ProceduralBlas;
@@ -229,8 +242,10 @@ namespace Lucerna {
 			VkAccelerationStructureBuildRangeInfoKHR range{};
 			range.primitiveCount = primitives;
 			const VkAccelerationStructureBuildRangeInfoKHR* rangePointer = &range;
-			vk.Immediate([&](VkCommandBuffer cmd) { Fn().CmdBuild(cmd, 1, &info, &rangePointer); }, "BLAS build");
+			m_Stats.ProceduralBuildMs = vk.Immediate([&](VkCommandBuffer cmd) { Fn().CmdBuild(cmd, 1, &info, &rangePointer); }, "BLAS build");
 		}
+		else
+			m_Stats.Primitives = 0;
 
 	}
 
@@ -264,7 +279,7 @@ namespace Lucerna {
 
 		const VkDeviceSize instanceBytes = std::max<VkDeviceSize>(instances.size() * sizeof(VkAccelerationStructureInstanceKHR), 64);
 		EnsureBuffer(m_Instances, instanceBytes, INPUT_USAGE,
-		             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, MemoryCategory::Tlas);
 		if (!instances.empty())
 			memcpy(m_Instances.Mapped, instances.data(), instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
 
@@ -286,9 +301,12 @@ namespace Lucerna {
 
 		if (m_Tlas != VK_NULL_HANDLE)
 			Fn().Destroy(vk.Device(), m_Tlas, nullptr);
-		EnsureBuffer(m_TlasStorage, sizes.accelerationStructureSize, STORAGE_USAGE, DEVICE_MEMORY);
+		EnsureBuffer(m_TlasStorage, sizes.accelerationStructureSize, STORAGE_USAGE, DEVICE_MEMORY, MemoryCategory::Tlas);
 		EnsureBuffer(m_Scratch, sizes.buildScratchSize + m_ScratchAlignment,
-		             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, DEVICE_MEMORY);
+		             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, DEVICE_MEMORY, MemoryCategory::AccelScratch);
+		m_Stats.Instances = instanceCount;
+		m_Stats.TlasSize = sizes.accelerationStructureSize;
+		m_Stats.TlasScratch = sizes.buildScratchSize;
 
 		m_Tlas = CreateStructure(m_TlasStorage, 0, sizes.accelerationStructureSize, VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR);
 		info.dstAccelerationStructure = m_Tlas;
@@ -297,6 +315,6 @@ namespace Lucerna {
 		VkAccelerationStructureBuildRangeInfoKHR range{};
 		range.primitiveCount = instanceCount;
 		const VkAccelerationStructureBuildRangeInfoKHR* rangePointer = &range;
-		vk.Immediate([&](VkCommandBuffer cmd) { Fn().CmdBuild(cmd, 1, &info, &rangePointer); }, "TLAS build");
+		m_Stats.TlasBuildMs = vk.Immediate([&](VkCommandBuffer cmd) { Fn().CmdBuild(cmd, 1, &info, &rangePointer); }, "TLAS build");
 	}
 }

@@ -214,6 +214,238 @@ namespace Lucerna {
 		ImGui::DockBuilderFinish(ImGui::DockNodeGetRootNode(viewport->DockNode)->ID);
 	}
 
+	namespace {
+		std::string FormatBytes(double bytes) {
+			char text[32];
+			if (bytes >= 1e9) snprintf(text, sizeof(text), "%.2f GB", bytes / 1e9);
+			else if (bytes >= 1e6) snprintf(text, sizeof(text), "%.0f MB", bytes / 1e6);
+			else if (bytes >= 1e3) snprintf(text, sizeof(text), "%.0f KB", bytes / 1e3);
+			else snprintf(text, sizeof(text), "%.0f B", bytes);
+			return text;
+		}
+
+		ImU32 CategoryColor(MemoryCategory category) {
+			switch (category) {
+			case MemoryCategory::TriangleBuffers: return Col(Theme::Rgb(0x6fd6b8));
+			case MemoryCategory::ColorTextures: return Col(Theme::Accent);
+			case MemoryCategory::DataTextures: return Col(Theme::Rgb(0xc3a6ff));
+			case MemoryCategory::Blas: return Col(Theme::Rgb(0xff7f6b));
+			case MemoryCategory::Tlas: return Col(Theme::SelectedText);
+			case MemoryCategory::AccelScratch: return Col(Theme::Rgb(0xb05a4e));
+			case MemoryCategory::RenderTargets: return Col(Theme::IconSky);
+			case MemoryCategory::Environment: return Col(Theme::Rgb(0x4f8fd1));
+			case MemoryCategory::SceneBuffers: return Col(Theme::Rgb(0xd9d9e0));
+			case MemoryCategory::Staging: return Col(Theme::Rgb(0x8a8a93));
+			default: return Col(Theme::Rgb(0x6a6a72));
+			}
+		}
+
+		// Un numero allineato a destra nella cella della tabella
+		void RightAligned(const std::string& text, bool dim) {
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(text.c_str()).x);
+			if (dim)
+				ImGui::TextColored(Theme::TextDim, "%s", text.c_str());
+			else
+				ImGui::TextUnformatted(text.c_str());
+		}
+	}
+
+	// La tab Memory: la VRAM per categoria contro il budget del driver, le strutture di
+	// accelerazione per asset, e la RAM del processo
+	void Application::DrawMemoryTab() {
+		PROFILE_SCOPE("Memory tab");
+		const float s = UI::Scale();
+		const MemoryReport memory = m_Vulkan.Memory();
+		constexpr size_t categories = static_cast<size_t>(MemoryCategory::Count);
+		const double tracked = static_cast<double>(memory.DeviceTotal());
+		// quello che il driver conta e noi no: swapchain, ImGui, il driver stesso
+		const double untracked = memory.HasBudget && memory.HeapUsage > memory.DeviceTotal() ? double(memory.HeapUsage - memory.DeviceTotal()) : 0.0;
+		const double used = tracked + untracked;
+		const double heap = static_cast<double>(std::max<VkDeviceSize>(memory.HeapSize, 1));
+		const double budget = memory.HasBudget ? static_cast<double>(memory.HeapBudget) : heap;
+		ImDrawList* list = ImGui::GetWindowDrawList();
+
+		// ---- la barra della VRAM
+		{
+			const ImVec2 p = ImGui::GetCursorScreenPos();
+			const float w = ImGui::GetContentRegionAvail().x;
+			const float h = 116.0f * s;
+			list->AddRectFilled(p, ImVec2(p.x + w, p.y + h), Col(Theme::Rail), 4.0f * s);
+			list->AddRect(p, ImVec2(p.x + w, p.y + h), Col(Theme::Border), 4.0f * s);
+			ImGui::SetCursorScreenPos(ImVec2(p.x + 14.0f * s, p.y + 10.0f * s));
+			ImGui::PushFont(UI::BoldFont());
+			ImGui::TextUnformatted("VRAM");
+			ImGui::PopFont();
+			ImGui::SameLine();
+			ImGui::TextColored(Theme::TextDim, "%s \xc2\xb7 device-local heap%s", m_Vulkan.DeviceName(),
+			                   memory.HasBudget ? " \xc2\xb7 VK_EXT_memory_budget" : " \xc2\xb7 no budget extension: only tracked allocations");
+			std::string summary = FormatBytes(used) + " Lucerna";
+			if (memory.HasBudget)
+				summary += " \xc2\xb7 " + FormatBytes(budget) + " budget";
+			summary += " \xc2\xb7 " + FormatBytes(heap) + " heap";
+			ImGui::PushFont(UI::MonoFont());
+			list->AddText(ImVec2(p.x + w - 14.0f * s - ImGui::CalcTextSize(summary.c_str()).x, p.y + 12.0f * s), Col(Theme::Text), summary.c_str());
+			ImGui::PopFont();
+
+			// le categorie, poi il non tracciato, il libero nel budget, e oltre il budget (gli altri processi)
+			const float x0 = p.x + 14.0f * s, x1 = p.x + w - 14.0f * s, y0 = p.y + 36.0f * s, y1 = y0 + 16.0f * s;
+			list->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), Col(Theme::Field), 3.0f * s);
+			float x = x0;
+			auto segment = [&](double bytes, ImU32 color) {
+				const float x2 = std::min(x1, x + static_cast<float>((x1 - x0) * bytes / heap));
+				if (x2 > x)
+					list->AddRectFilled(ImVec2(x, y0), ImVec2(x2, y1), color);
+				x = x2;
+			};
+			for (size_t c = 0; c < categories; c++)
+				segment(static_cast<double>(memory.Device[c]), CategoryColor(static_cast<MemoryCategory>(c)));
+			segment(untracked, Col(Theme::Rgb(0x55555d)));
+			const float freeEnd = x0 + static_cast<float>((x1 - x0) * std::min(budget, heap) / heap);
+			for (float hx = freeEnd; hx < x1; hx += 6.0f * s) // oltre il budget: tratteggio
+				list->AddLine(ImVec2(hx, y1), ImVec2(std::min(hx + 6.0f * s, x1), y0), Col(Theme::Rgb(0x4a4a52)), 1.0f);
+
+			ImGui::SetCursorScreenPos(ImVec2(x0, y1 + 10.0f * s));
+			bool first = true;
+			for (size_t c = 0; c < categories; c++) {
+				if (memory.Device[c] == 0)
+					continue;
+				if (!first)
+					ImGui::SameLine(0.0f, 14.0f * s);
+				first = false;
+				Swatch(CategoryColor(static_cast<MemoryCategory>(c)));
+				ImGui::TextColored(Theme::TextDim, "%s", MemoryCategoryName(static_cast<MemoryCategory>(c)));
+			}
+			if (untracked > 0.0) {
+				ImGui::SameLine(0.0f, 14.0f * s);
+				Swatch(Col(Theme::Rgb(0x55555d)));
+				ImGui::TextColored(Theme::TextDim, "Untracked");
+			}
+
+			// la memoria fuori dall'heap della GPU e la RAM del processo
+			VkDeviceSize host = 0;
+			for (VkDeviceSize bytes : memory.Host)
+				host += bytes;
+			const ProcessMemoryInfo ram = ProcessMemory();
+			ImGui::SetCursorScreenPos(ImVec2(x0, ImGui::GetCursorScreenPos().y + 2.0f * s));
+			auto pair = [&](const char* label, double bytes, bool first) {
+				if (!first)
+					ImGui::SameLine(0.0f, 6.0f * s);
+				ImGui::TextColored(Theme::TextDim, "%s", label);
+				ImGui::SameLine();
+				ImGui::PushFont(UI::MonoFont());
+				ImGui::TextUnformatted(FormatBytes(bytes).c_str());
+				ImGui::PopFont();
+			};
+			pair("Process RAM", static_cast<double>(ram.Resident), true);
+			pair("\xc2\xb7 peak", static_cast<double>(ram.Peak), false);
+			pair("\xc2\xb7 host-visible buffers", static_cast<double>(host), false);
+			ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 10.0f * s));
+		}
+
+		const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit;
+		ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
+		ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
+		if (ImGui::BeginTable("##memory", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY, ImVec2(0.0f, ImGui::GetContentRegionAvail().y))) {
+			ImGui::TableSetupColumn("categories", ImGuiTableColumnFlags_WidthStretch, 5.0f);
+			ImGui::TableSetupColumn("structures", ImGuiTableColumnFlags_WidthStretch, 7.0f);
+			ImGui::TableNextRow();
+
+			// ---- le categorie
+			ImGui::TableSetColumnIndex(0);
+			if (ImGui::BeginTable("##categories", 3, flags)) {
+				ImGui::TableSetupColumn("Category", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableSetupColumn("VRAM", ImGuiTableColumnFlags_WidthFixed, 80.0f * s);
+				ImGui::TableSetupColumn("% used", ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
+				ImGui::TableHeadersRow();
+				auto row = [&](ImU32 color, const char* name, double bytes, bool dim) {
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					Swatch(color);
+					ImGui::TextColored(dim ? Theme::TextDim : Theme::Text, "%s", name);
+					ImGui::PushFont(UI::MonoFont());
+					ImGui::TableSetColumnIndex(1);
+					RightAligned(FormatBytes(bytes), false);
+					ImGui::TableSetColumnIndex(2);
+					RightAligned(Percent(static_cast<float>(bytes), static_cast<float>(used)), true);
+					ImGui::PopFont();
+				};
+				std::vector<size_t> order;
+				for (size_t c = 0; c < categories; c++)
+					if (memory.Device[c] > 0)
+						order.push_back(c);
+				std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return memory.Device[a] > memory.Device[b]; });
+				for (size_t c : order)
+					row(CategoryColor(static_cast<MemoryCategory>(c)), MemoryCategoryName(static_cast<MemoryCategory>(c)), static_cast<double>(memory.Device[c]), false);
+				if (untracked > 0.0)
+					row(Col(Theme::Rgb(0x55555d)), "Untracked (driver, swapchain, ImGui)", untracked, true);
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::Dummy(ImVec2(ImGui::GetFontSize() * 0.62f, 0.0f));
+				ImGui::SameLine(0.0f, 6.0f * s);
+				ImGui::TextColored(Theme::SelectedText, "Total");
+				ImGui::PushFont(UI::MonoFont());
+				ImGui::TableSetColumnIndex(1);
+				RightAligned(FormatBytes(used), false);
+				ImGui::PopFont();
+				ImGui::EndTable();
+			}
+
+
+			// ---- le strutture di accelerazione
+			ImGui::TableSetColumnIndex(1);
+			const RenderScene& gpu = m_Renderer.GpuScene();
+			const AccelStats& accel = gpu.Accel();
+			std::vector<MeshAccelRow> meshes = gpu.MeshAccel();
+			std::sort(meshes.begin(), meshes.end(), [](const MeshAccelRow& a, const MeshAccelRow& b) { return a.Size > b.Size; });
+			if (ImGui::BeginTable("##structures", 6, flags)) {
+				ImGui::TableSetupColumn("Acceleration structure", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableSetupColumn("Instances", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+				ImGui::TableSetupColumn("Triangles", ImGuiTableColumnFlags_WidthFixed, 84.0f * s);
+				ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+				ImGui::TableSetupColumn("Scratch", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+				ImGui::TableSetupColumn("Build", ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+				ImGui::TableHeadersRow();
+				auto row = [&](const std::string& name, int depth, const std::string& instances, const std::string& triangles,
+				               const std::string& size, const std::string& scratch, const std::string& build) {
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::Indent(16.0f * s * depth);
+					ImGui::TextColored(depth == 0 ? Theme::Text : Theme::TextDim, "%s", name.c_str());
+					ImGui::Unindent(16.0f * s * depth);
+					ImGui::PushFont(UI::MonoFont());
+					const std::string* cells[5] = { &instances, &triangles, &size, &scratch, &build };
+					for (int c = 0; c < 5; c++) {
+						ImGui::TableSetColumnIndex(c + 1);
+						RightAligned(*cells[c], c != 1 && c != 2);
+					}
+					ImGui::PopFont();
+				};
+				auto ms = [](float v) { char t[24]; snprintf(t, sizeof(t), v >= 1.0f ? "%.0f ms" : "%.2f ms", v); return std::string(t); };
+				auto count = [](uint32_t v) { return std::to_string(v); };
+				for (const MeshAccelRow& mesh : meshes) {
+					row(mesh.Name, 0, std::to_string(mesh.Instances), count(mesh.Opaque + mesh.Masked),
+					    FormatBytes(double(mesh.Size)), FormatBytes(double(mesh.Scratch)), "");
+					if (mesh.Masked > 0) {
+						row("Opaque", 1, "", count(mesh.Opaque), "", "", "");
+						row("Masked (alpha)", 1, "", count(mesh.Masked), "", "", "");
+					}
+				}
+				if (!meshes.empty())
+					row("Mesh BLAS build", 0, "", "", "", "", ms(accel.MeshBuildMs));
+				if (accel.Primitives > 0)
+					row("Primitives (AABB)", 0, std::to_string(accel.Primitives), "-",
+					    FormatBytes(double(accel.ProceduralSize)), FormatBytes(double(accel.ProceduralScratch)), ms(accel.ProceduralBuildMs));
+				row("TLAS", 0, std::to_string(accel.Instances), "-", FormatBytes(double(accel.TlasSize)),
+				    FormatBytes(double(accel.TlasScratch)), ms(accel.TlasBuildMs));
+				ImGui::EndTable();
+			}
+			ImGui::Spacing();
+			ImGui::TextWrapped("Sorted by size. The mesh BLAS share one buffer and build in one batch; masked geometry is split as in ADR 0008.");
+			ImGui::EndTable();
+		}
+		ImGui::PopStyleColor(2);
+	}
+
 	// La tab Loading: l'ultimo caricamento come albero di fasi, con quando comincia ognuna, quanto
 	// dura e una barra sulla linea del tempo del caricamento
 	void Application::DrawLoadingTab() {
@@ -358,15 +590,21 @@ namespace Lucerna {
 		if (profiler.Paused() && m_ProfilerFocused && ImGui::IsKeyPressed(ImGuiKey_Escape))
 			resume();
 
-		// ---- toolbar: le tab (Memory arriva con #34), e per Frame la pausa e la finestra
+		// ---- toolbar: le tab, e per Frame la pausa e la finestra
 		if (UI::Pill("Frame", m_ProfilerTab == 0))
 			m_ProfilerTab = 0;
 		ImGui::SameLine(0.0f, 2.0f * s);
+		if (UI::Pill("Memory", m_ProfilerTab == 2))
+			m_ProfilerTab = 2;
+		ImGui::SameLine(0.0f, 2.0f * s);
 		if (UI::Pill("Loading", m_ProfilerTab == 1))
 			m_ProfilerTab = 1;
-		if (m_ProfilerTab == 1) {
+		if (m_ProfilerTab != 0) {
 			ImGui::Separator();
-			DrawLoadingTab();
+			if (m_ProfilerTab == 1)
+				DrawLoadingTab();
+			else
+				DrawMemoryTab();
 			ImGui::End();
 			return;
 		}

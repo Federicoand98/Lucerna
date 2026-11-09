@@ -52,6 +52,7 @@ namespace Lucerna {
 		std::string SaveScreenshot(const std::string& path = "");
 		void SaveHdr(const std::string& path);
 		void Release();
+		const RenderScene& GpuScene() const { return *m_Scene; } // per il profiler
 	public:
 		RenderSettings Settings; // come si calcola l'immagine: si salva con la scena (ADR 0010)
 		ViewSettings View;       // cosa si guarda: mai salvato

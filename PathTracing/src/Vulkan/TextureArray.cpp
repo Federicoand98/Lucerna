@@ -40,7 +40,7 @@ namespace Lucerna {
 		m_Sampler = VK_NULL_HANDLE;
 	}
 
-	void TextureArray::Load(const std::vector<std::string>& paths, uint32_t size, VkFormat format) {
+	void TextureArray::Load(const std::vector<std::string>& paths, MemoryCategory category, uint32_t size, VkFormat format) {
 		VulkanContext& vk = VulkanContext::Get();
 		Release();
 
@@ -53,7 +53,7 @@ namespace Lucerna {
 		// sempre in lineare. L'alpha resta lineare (non e' colore).
 		m_Image = vk.CreateImage(format, size, size,
 		                         VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-		                         layers, levels, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+		                         category, layers, levels, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
 
 		VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
 		samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -67,7 +67,7 @@ namespace Lucerna {
 
 		const size_t layerBytes = static_cast<size_t>(size) * size * 4;
 		GpuBuffer staging = vk.CreateBuffer(layerBytes * layers, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, MemoryCategory::Staging);
 		unsigned char* mapped = static_cast<unsigned char*>(staging.Mapped);
 		memset(mapped, 255, layerBytes * layers); // bianco: scena senza texture o file illeggibile
 

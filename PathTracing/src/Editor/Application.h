@@ -99,6 +99,7 @@ namespace Lucerna {
 		void DrawDeveloperSection();
 		void DrawProfilerPanel();         // ProfilerPanel.cpp
 		void DrawLoadingTab();
+		void DrawMemoryTab();
 		void DockProfilerUnderViewport(); // la prima volta, con un imgui.ini di prima del profiler
 		std::string ProfilerHudLine(bool& warn) const; // la diagnosi per l'HUD
 
@@ -173,7 +174,7 @@ namespace Lucerna {
 		// il frame fissato col clic (-1 nessuno), e se ha il focus (Esc riprende invece di deselezionare)
 		bool m_ShowProfiler = false, m_ProfilerDockChecked = false, m_ProfilerFocused = false, m_FocusProfiler = false;
 		int m_ProfilerWindow = 1, m_ProfilerPinned = -1;
-		int m_ProfilerTab = 0; // 0 Frame, 1 Loading
+		int m_ProfilerTab = 0; // 0 Frame, 1 Loading, 2 Memory
 		std::unordered_set<std::string> m_ProfilerCollapsed; // le righe chiuse della tabella CPU, per percorso
 		bool m_HudClicked = false; // un clic sull'HUD apre il profiler e non fa picking
 		bool m_ResetLayout = false;

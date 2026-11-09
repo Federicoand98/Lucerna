@@ -37,8 +37,8 @@ namespace Lucerna {
 		});
 
 		const VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-		m_PingA = vk.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, width, height, usage);
-		m_PingB = vk.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, width, height, usage);
+		m_PingA = vk.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, width, height, usage, MemoryCategory::RenderTargets);
+		m_PingB = vk.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, width, height, usage, MemoryCategory::RenderTargets);
 		vk.TransitionToGeneral(m_PingA);
 		vk.TransitionToGeneral(m_PingB);
 	}

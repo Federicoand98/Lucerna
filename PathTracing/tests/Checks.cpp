@@ -135,6 +135,10 @@ int main() {
 		CHECK(profiler.History().back().Cpu.size() == Profiler::MaxScopes);
 		profiler.Reset();
 
+		// la RAM del processo si legge, e il picco non e' mai sotto la residente
+		const ProcessMemoryInfo ram = ProcessMemory();
+		CHECK(ram.Resident > 0 && ram.Peak >= ram.Resident);
+
 		// caricamenti: aperti dentro uno scope (il menu), chiusi dal primo present dopo il Sync
 		using namespace std::chrono_literals;
 		profiler.BeginFrame();

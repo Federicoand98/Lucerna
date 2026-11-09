@@ -22,6 +22,14 @@ namespace Lucerna {
 	* rifa' la TLAS, un materiale ricarica i materiali e la light list, e triangoli e BLAS (decine
 	* di MB su Sponza) si toccano solo quando cambia la geometria.
 	*/
+	// Un asset di geometria come lo vede il profiler: il suo BLAS e quante istanze lo usano
+	struct MeshAccelRow {
+		std::string Name;
+		int Instances = 0;
+		uint32_t Opaque = 0, Masked = 0; // i triangoli delle due geometrie del BLAS (ADR 0008)
+		VkDeviceSize Size = 0, Scratch = 0;
+	};
+
 	class RenderScene {
 	public:
 		RenderScene();
@@ -41,6 +49,8 @@ namespace Lucerna {
 		const GpuBuffer& TriUVs() const { return m_TriUVs; }
 		const GpuBuffer& Lights() const { return m_Lights; }
 		const VkAccelerationStructureKHR& TopLevel() const { return m_Accel.TopLevel(); }
+		const AccelStats& Accel() const { return m_Accel.Stats(); }
+		std::vector<MeshAccelRow> MeshAccel() const; // una riga per asset con un BLAS
 		const TextureArray& AlbedoTextures() const { return m_AlbedoTextures; }
 		const TextureArray& DataTextures() const { return m_DataTextures; }
 		const GpuImage& Environment() const { return m_Environment; }
@@ -60,7 +70,7 @@ namespace Lucerna {
 		void BuildMeshInfos(const Scene& scene, const AssetLibrary& assets);
 		void BuildLights(const Scene& scene, const AssetLibrary& assets);
 		float MaterialIndexOf(const ObjectId& id) const; // -1 = nessun materiale
-		void Upload(GpuBuffer& buffer, const void* data, size_t bytes);
+		void Upload(GpuBuffer& buffer, const void* data, size_t bytes, MemoryCategory category = MemoryCategory::SceneBuffers);
 		void LoadEnvironment();
 
 	private:
@@ -78,6 +88,7 @@ namespace Lucerna {
 		std::unordered_map<ObjectId, int> m_TextureLayer;   // layer nell'array del suo tipo
 		std::unordered_map<ObjectId, int> m_AssetBlas;      // asset di geometria -> indice in m_AssetRanges
 		std::vector<MeshInfo> m_AssetRanges;  // per asset usato: triangoli e partizione, il suo BLAS
+		std::vector<std::string> m_AssetNames; // per asset usato, per il profiler
 		std::vector<MeshInfo> m_MeshInfos;    // per istanza: l'ingresso della TLAS
 		std::vector<int> m_InstanceBlas;      // per istanza: il BLAS del suo asset, -1 = nessuno
 

@@ -32,7 +32,7 @@ namespace Lucerna {
 		auto replace = [&](GpuImage& image) {
 			GpuImage old = image;
 			vk.Defer([old]() mutable { VulkanContext::Get().DestroyImage(old); });
-			image = vk.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, width, height, TARGET_USAGE);
+			image = vk.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, width, height, TARGET_USAGE, MemoryCategory::RenderTargets);
 			vk.TransitionToGeneral(image);
 		};
 		replace(m_RenderedImage);
@@ -54,7 +54,7 @@ namespace Lucerna {
 		GpuImage old = m_Display;
 		vk.Defer([old]() mutable { VulkanContext::Get().DestroyImage(old); });
 
-		m_Display = vk.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, width, height, TARGET_USAGE);
+		m_Display = vk.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, width, height, TARGET_USAGE, MemoryCategory::RenderTargets);
 		vk.TransitionToGeneral(m_Display);
 		m_DisplayVersion++; // chi la mostra deve registrare l'immagine nuova
 	}
@@ -272,7 +272,7 @@ namespace Lucerna {
 		vkDeviceWaitIdle(vk.Device());
 
 		GpuBuffer staging = vk.CreateBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-		                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+		                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, MemoryCategory::Staging);
 		vk.Immediate([&](VkCommandBuffer cmd) {
 			VkMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
 			barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
