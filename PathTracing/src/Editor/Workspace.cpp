@@ -6,6 +6,7 @@
 #include "Editor/Application.h"
 #include "Editor/Icons.h"
 #include "Editor/Widgets.h"
+#include "Core/Profiler.h"
 
 #include "imgui_internal.h"
 #include "imgui_impl_vulkan.h"
@@ -18,20 +19,23 @@ namespace Lucerna {
 		constexpr const char* MATERIALS = "Materials";
 		constexpr const char* VIEWPORT = "Viewport";
 		constexpr const char* PROPERTIES = "Properties";
+		constexpr const char* PROFILER = "Profiler";
 
 		const char* const AOV_NAMES[] = { "Beauty", "Albedo", "Normal", "Depth", "History" };
 
-		// Un riquadro dell'HUD sopra la render, in alto a sinistra (dir = 1) o a destra (dir = -1)
-		void HudLabel(ImDrawList* list, ImVec2 anchor, float dir, const char* text, ImU32 color) {
+		// Un riquadro dell'HUD sopra la render, in alto a sinistra (dir = 1) o a destra (dir = -1).
+		// Ritorna il rettangolo, per chi lo rende cliccabile.
+		ImRect HudLabel(ImDrawList* list, ImVec2 anchor, float dir, const char* text, ImU32 color, ImU32 background = 0) {
 			ImGui::PushFont(UI::MonoFont());
 			const float s = UI::Scale();
 			const ImVec2 size = ImGui::CalcTextSize(text);
 			const ImVec2 pad(8.0f * s, 4.0f * s);
 			const ImVec2 min(dir > 0 ? anchor.x : anchor.x - size.x - 2 * pad.x, anchor.y);
 			const ImVec2 max(min.x + size.x + 2 * pad.x, min.y + size.y + 2 * pad.y);
-			list->AddRectFilled(min, max, ImGui::GetColorU32(Theme::Hud), 4.0f * s);
+			list->AddRectFilled(min, max, background ? background : ImGui::GetColorU32(Theme::Hud), 4.0f * s);
 			list->AddText(ImVec2(min.x + pad.x, min.y + pad.y), color, text);
 			ImGui::PopFont();
+			return ImRect(min, max);
 		}
 	}
 
@@ -51,13 +55,17 @@ namespace Lucerna {
 		const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 380.0f * s / (viewport->WorkSize.x - 280.0f * s), nullptr, &center);
 		ImGuiID outliner = left;
 		const ImGuiID materials = ImGui::DockBuilderSplitNode(outliner, ImGuiDir_Down, 0.28f, nullptr, &outliner);
+		// il profiler sotto la viewport, a tutta larghezza; chiuso, il suo spazio torna alla viewport
+		const ImGuiID profiler = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.40f, nullptr, &center);
 
 		ImGui::DockBuilderDockWindow(OUTLINER, outliner);
 		ImGui::DockBuilderDockWindow(MATERIALS, materials);
 		ImGui::DockBuilderDockWindow(PROPERTIES, right);
 		ImGui::DockBuilderDockWindow(VIEWPORT, center);
+		ImGui::DockBuilderDockWindow(PROFILER, profiler);
 		ImGui::DockBuilderFinish(dockspace);
 		m_ShowOutliner = m_ShowMaterials = m_ShowProperties = true;
+		m_ProfilerDockChecked = true;
 	}
 
 	// Va chiamata prima del dockspace: la barra riduce l'area di lavoro che il dockspace occupa
@@ -103,6 +111,8 @@ namespace Lucerna {
 			DrawPropertiesPanel();
 		if (m_ShowPreferences)
 			DrawPreferencesWindow();
+		if (m_ShowProfiler)
+			DrawProfilerPanel();
 		DrawViewportPanel(deltaTime);
 	}
 
@@ -142,6 +152,7 @@ namespace Lucerna {
 		ImGui::MenuItem(OUTLINER, nullptr, &m_ShowOutliner);
 		ImGui::MenuItem(MATERIALS, nullptr, &m_ShowMaterials);
 		ImGui::MenuItem(PROPERTIES, nullptr, &m_ShowProperties);
+		ImGui::MenuItem(ICON_PROFILER " Profiler", nullptr, &m_ShowProfiler);
 		ImGui::MenuItem("Viewport readouts", nullptr, &m_ShowHud);
 		ImGui::MenuItem(ICON_DEBUG " Developer", nullptr, &m_ShowDeveloper);
 		ImGui::Separator();
@@ -424,8 +435,24 @@ namespace Lucerna {
 		snprintf(line, sizeof(line), "%d spp  %s", samples,
 		         !m_Renderer.View.PathTracing ? "paused" : m_Renderer.AccumulatedFrames() < 64 ? "converging" : "accumulating");
 		HudLabel(list, topRight, -1.0f, line, ImGui::GetColorU32(Theme::Text));
-		snprintf(line, sizeof(line), "PT %.2f ms  DN %.2f ms  %.0f fps", m_Renderer.GetPathTraceMs(), m_Renderer.GetDenoiseMs(), m_FPS);
+		const FrameRecord& latest = Profiler::Get().Latest();
+		snprintf(line, sizeof(line), "PT %.2f ms  DN %.2f ms  %.0f fps", latest.GpuMs("Path tracer"), latest.GpuMs("Denoiser"), m_FPS);
 		HudLabel(list, ImVec2(topRight.x, topRight.y + lineStep), -1.0f, line, ImGui::GetColorU32(Theme::Text));
+
+		// la diagnosi del profiler: ambra quando il limite non e' la GPU; il clic apre il profiler
+		bool warn = false;
+		const std::string diagnosis = std::string(ICON_ZAP " ") + ProfilerHudLine(warn);
+		const ImRect rect = HudLabel(list, ImVec2(topRight.x, topRight.y + 2 * lineStep), -1.0f, diagnosis.c_str(),
+		                             ImGui::GetColorU32(warn ? Theme::AccentText : Theme::Text), warn ? ImGui::GetColorU32(Theme::Accent) : 0);
+		if (ImGui::IsMouseHoveringRect(rect.Min, rect.Max) && ImGui::IsWindowHovered()) {
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+			ImGui::SetTooltip("Open the profiler");
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+				m_ShowProfiler = true;
+				m_FocusProfiler = true;
+				m_HudClicked = true;
+			}
+		}
 	}
 
 	void Application::DrawViewportPanel(float deltaTime) {
@@ -731,13 +758,6 @@ namespace Lucerna {
 				m_PickRequestCount++;
 				m_Renderer.RequestPick(m_LastPickPixel.x, m_LastPickPixel.y);
 			}
-		}
-		if (UI::Section("Timing")) {
-			ImGui::PushFont(UI::MonoFont());
-			ImGui::Text("frame %.2f ms  %.0f fps", 1000.0 / std::max(m_FPS, 1.0), m_FPS);
-			ImGui::Text("path tracer %.2f ms", m_Renderer.GetPathTraceMs());
-			ImGui::Text("denoiser    %.2f ms", m_Renderer.GetDenoiseMs());
-			ImGui::PopFont();
 		}
 	}
 

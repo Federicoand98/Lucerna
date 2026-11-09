@@ -96,6 +96,9 @@ namespace Lucerna {
 		void DrawRenderSection();
 		void DrawFilmSection();
 		void DrawDeveloperSection();
+		void DrawProfilerPanel();         // ProfilerPanel.cpp
+		void DockProfilerUnderViewport(); // la prima volta, con un imgui.ini di prima del profiler
+		std::string ProfilerHudLine(bool& warn) const; // la diagnosi per l'HUD
 
 		void DrawSelectionProperties();
 		bool DrawMaterialEditor(Material& material, int index); // true = la copia e' cambiata
@@ -164,6 +167,11 @@ namespace Lucerna {
 		PropertiesTab m_PropertiesTab = PropertiesTab::Object;
 		bool m_ShowOutliner = true, m_ShowMaterials = true, m_ShowProperties = true;
 		bool m_ShowHud = true, m_ShowDeveloper = false, m_ShowPreferences = false;
+		// Il profiler (issue #31): finestra dello storico scelta (indice in 120/300/1000 frame),
+		// il frame fissato col clic (-1 nessuno), e se ha il focus (Esc riprende invece di deselezionare)
+		bool m_ShowProfiler = false, m_ProfilerDockChecked = false, m_ProfilerFocused = false, m_FocusProfiler = false;
+		int m_ProfilerWindow = 1, m_ProfilerPinned = -1;
+		bool m_HudClicked = false; // un clic sull'HUD apre il profiler e non fa picking
 		bool m_ResetLayout = false;
 		// Il materiale aperto nella sezione Material: quello cliccato nel pannello, o quello
 		// dell'oggetto selezionato quando la selezione cambia (m_MaterialFollowsSelection)

@@ -33,8 +33,7 @@ namespace Lucerna::Theme {
 		Fonts fonts;
 		fonts.Regular = LoadWithIcons("fonts/Inter-Regular.ttf", TEXT_SIZE * scale);
 		fonts.Bold = LoadWithIcons("fonts/Inter-SemiBold.ttf", TEXT_SIZE * scale);
-		if (std::filesystem::exists("fonts/JetBrainsMono-Regular.ttf"))
-			fonts.Mono = ImGui::GetIO().Fonts->AddFontFromFileTTF("fonts/JetBrainsMono-Regular.ttf", MONO_SIZE * scale);
+		fonts.Mono = LoadWithIcons("fonts/JetBrainsMono-Regular.ttf", MONO_SIZE * scale); // le icone servono anche all'HUD
 		if (fonts.Regular == nullptr)
 			fonts.Regular = ImGui::GetIO().Fonts->AddFontDefault();
 		if (fonts.Bold == nullptr)

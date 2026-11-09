@@ -59,7 +59,9 @@ namespace Lucerna {
 		// cresce (5,9,17,33,65 px) a costo per-passata costante.
 		const int steps[5] = { 1, 2, 4, 8, 16 };
 
+		static const char* const PASS_NAMES[5] = { "Pass 1 \xc2\xb7 step 1", "Pass 2 \xc2\xb7 step 2", "Pass 3 \xc2\xb7 step 4", "Pass 4 \xc2\xb7 step 8", "Pass 5 \xc2\xb7 step 16" };
 		for (int i = 0; i < 5; i++) {
+			GpuScope scope(cmd, PASS_NAMES[i]);
 			// Ping-pong. i=0 legge l'accumulatore di irradianza; le intermedie restano in
 			// irradianza; i=4 rimodula + blend. Sequenza degli output: A,B,A,B,A -> finale in PingA.
 			const GpuImage& in = (i == 0) ? irradiance : ((i % 2 == 1) ? m_PingA : m_PingB);

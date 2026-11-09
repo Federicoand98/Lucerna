@@ -101,25 +101,6 @@ namespace Lucerna {
 		m_Tonemap = std::make_unique<ComputePipeline>(ShaderPath("Tonemap.spv"),
 			std::vector<VkDescriptorType>{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE },
 			static_cast<uint32_t>(sizeof(TonemapParams)));
-
-		VkQueryPoolCreateInfo queryInfo{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
-		queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
-		queryInfo.queryCount = 4;
-		vkCreateQueryPool(vk.Device(), &queryInfo, nullptr, &m_Timestamps);
-	}
-
-	// Il frame scorso e' finito (BeginFrame ha aspettato la fence), quindi i risultati ci sono.
-	void Renderer::ReadTimestamps() {
-		if (!m_TimestampsWritten)
-			return;
-
-		VulkanContext& vk = VulkanContext::Get();
-		uint64_t ticks[4] = {};
-		vkGetQueryPoolResults(vk.Device(), m_Timestamps, 0, m_DenoiseWritten ? 4 : 2, sizeof(ticks), ticks, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
-
-		const float toMs = vk.TimestampPeriod() * 1e-6f;
-		m_PathTraceMs = static_cast<float>(ticks[1] - ticks[0]) * toMs;
-		m_DenoiseMs = m_DenoiseWritten ? static_cast<float>(ticks[3] - ticks[2]) * toMs : 0.0f;
 	}
 
 	void Renderer::Render(const RenderView& view, Scene& scene, AssetLibrary& assets) {
@@ -128,8 +109,6 @@ namespace Lucerna {
 			return;
 
 		VkCommandBuffer cmd = VulkanContext::Get().Cmd();
-
-		ReadTimestamps();
 
 		// Il dispatch del picking era nel frame scorso: solo ora il suo risultato e' leggibile.
 		if (m_PickPending) {
@@ -216,14 +195,10 @@ namespace Lucerna {
 			vkCmdPipelineBarrier2(cmd, &dependency);
 		}
 
-		vkCmdResetQueryPool(cmd, m_Timestamps, 0, 4);
-		vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, m_Timestamps, 0);
-
-		if (!paused)
+		if (!paused) {
+			GpuScope scope(cmd, "Path tracer");
 			m_PathTracer->Dispatch(cmd, container, { m_RenderedImage, m_AlbedoAOV, m_NormalDepth[cur], m_Irradiance[cur], m_NormalDepth[prev], m_Irradiance[prev] });
-
-		vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, m_Timestamps, 1);
-		m_TimestampsWritten = true;
+		}
 		ComputeBarrier(cmd);
 
 		if (m_PickRequested) {
@@ -246,19 +221,20 @@ namespace Lucerna {
 			minFade = std::clamp(1.0f / std::sqrt(static_cast<float>(m_FramesSinceMove)), 0.0f, 1.0f);
 
 		const GpuImage* source = &m_RenderedImage;
-		m_DenoiseWritten = Settings.Denoise && View.AOVView == 0 && Settings.DenoiseStrength * minFade > 0.01f;
-		if (m_DenoiseWritten) {
-			vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, m_Timestamps, 2);
+		if (Settings.Denoise && View.AOVView == 0 && Settings.DenoiseStrength * minFade > 0.01f) {
+			GpuScope scope(cmd, "Denoiser");
 			source = &m_Denoiser->Run(cmd, m_Irradiance[last], m_RenderedImage, m_AlbedoAOV, m_NormalDepth[last],
 			                          Settings.DenoiseStrength, Settings.DenoiseAutoFade, Settings.DenoiseCPhi, Settings.DenoiseNPhi, Settings.DenoisePPhi, Settings.DenoiseAPhi);
-			vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, m_Timestamps, 3);
 		}
 
-		const TonemapParams tonemap = { Settings.Exposure, Settings.Tonemap ? 1 : 0, View.AOVView };
-		m_Tonemap->Bind(cmd);
-		m_Tonemap->Sampler(0, *source, m_DisplaySampler, VK_IMAGE_LAYOUT_GENERAL).Image(1, m_Display).Commit(cmd);
-		m_Tonemap->PushConstants(cmd, &tonemap, sizeof(tonemap));
-		vkCmdDispatch(cmd, (m_Width + 7) / 8, (m_Height + 7) / 8, 1);
+		{
+			GpuScope scope(cmd, "Tonemap");
+			const TonemapParams tonemap = { Settings.Exposure, Settings.Tonemap ? 1 : 0, View.AOVView };
+			m_Tonemap->Bind(cmd);
+			m_Tonemap->Sampler(0, *source, m_DisplaySampler, VK_IMAGE_LAYOUT_GENERAL).Image(1, m_Display).Commit(cmd);
+			m_Tonemap->PushConstants(cmd, &tonemap, sizeof(tonemap));
+			vkCmdDispatch(cmd, (m_Width + 7) / 8, (m_Height + 7) / 8, 1);
+		}
 
 		// ImGui campiona il display nel fragment shader.
 		{
@@ -357,11 +333,8 @@ namespace Lucerna {
 		m_Tonemap.reset();
 		for (GpuImage* image : { &m_RenderedImage, &m_AlbedoAOV, &m_NormalDepth[0], &m_NormalDepth[1], &m_Irradiance[0], &m_Irradiance[1], &m_Display })
 			vk.DestroyImage(*image);
-		if (m_Timestamps != VK_NULL_HANDLE)
-			vkDestroyQueryPool(vk.Device(), m_Timestamps, nullptr);
 		if (m_DisplaySampler != VK_NULL_HANDLE)
 			vkDestroySampler(vk.Device(), m_DisplaySampler, nullptr);
-		m_Timestamps = VK_NULL_HANDLE;
 		m_DisplaySampler = VK_NULL_HANDLE;
 	}
 }

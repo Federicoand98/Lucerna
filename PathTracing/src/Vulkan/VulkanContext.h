@@ -6,6 +6,7 @@
 #include "ptpch.h"
 #include <vulkan/vulkan.h>
 #include <functional>
+#include "Vulkan/GpuProfiler.h"
 
 struct GLFWwindow;
 
@@ -58,8 +59,12 @@ namespace Lucerna {
 		void Defer(std::function<void()> destroy) { m_Deferred.push_back(std::move(destroy)); }
 		void FlushDeferred(); // solo a GPU ferma: BeginFrame dopo la fence, o allo spegnimento
 
-		// Esegue comandi su un command buffer proprio e aspetta che finiscano.
-		void Immediate(const std::function<void(VkCommandBuffer)>& record);
+		// Esegue comandi su un command buffer proprio e aspetta che finiscano. Con un nome, il
+		// loro tempo GPU va nel profiler come parte del frame in corso (le build dei BLAS).
+		void Immediate(const std::function<void(VkCommandBuffer)>& record, const char* gpuName = nullptr);
+
+		// Gli scope GPU del command buffer del frame (GpuScope): si leggono dopo la sua fence
+		GpuProfiler& FrameTimer() { return m_FrameTimer; }
 
 		GpuBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory);
 		void DestroyBuffer(GpuBuffer& buffer);
@@ -119,6 +124,10 @@ namespace Lucerna {
 		VkSemaphore m_ImageAvailable = VK_NULL_HANDLE;
 		uint32_t m_ImageIndex = 0;
 		std::vector<std::function<void()>> m_Deferred;
+
+		GpuProfiler m_FrameTimer;     // gli scope del frame, letti nel BeginFrame successivo
+		GpuProfiler m_ImmediateTimer; // uno scope per Immediate, letto subito dopo la sua fence
+		bool m_FrameSubmitted = false;
 	};
 }
 

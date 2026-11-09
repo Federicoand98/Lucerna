@@ -5,6 +5,7 @@
 #include "imgui_internal.h"
 #include "Editor/Input.h"
 #include "Core/Paths.h"
+#include "Core/Profiler.h"
 #include "Editor/Icons.h"
 #include "Editor/Theme.h"
 #include "Editor/Widgets.h"
@@ -241,6 +242,7 @@ namespace Lucerna {
 		m_Renderer.Initialize();
 
 		while (m_IsRunning) {
+			Profiler::Get().BeginFrame();
 			glfwPollEvents();
 
 			// Chiudere la finestra chiede prima di salvare, se ci sono modifiche
@@ -309,6 +311,8 @@ namespace Lucerna {
 					// imgui.ini di prima non li conosce), e quando lo si chiede dal menu View
 					if (m_ResetLayout || ImGui::FindWindowSettingsByID(ImHashStr("Outliner")) == nullptr)
 						BuildDefaultLayout(dockspace_id);
+					else if (m_ShowProfiler && !m_ProfilerDockChecked)
+						DockProfilerUnderViewport();
 					m_ResetLayout = false;
 					ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 				}
@@ -329,7 +333,10 @@ namespace Lucerna {
 			ImGui::Render();
 
 			m_Vulkan.BeginUiPass();
-			ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), m_Vulkan.Cmd());
+			{
+				GpuScope scope(m_Vulkan.Cmd(), "ImGui");
+				ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), m_Vulkan.Cmd());
+			}
 			m_Vulkan.EndUiPass();
 			m_Vulkan.SubmitFrame();
 
@@ -625,8 +632,9 @@ namespace Lucerna {
 
 		if (m_Timer >= 1.0) {
 			m_FPS = (double)m_NFrames / m_Timer;
-			if (getenv("PT_LOG_FPS")) std::cout << "PTFPS " << m_FPS << " pt_ms " << m_Renderer.GetPathTraceMs()
-			                                    << " dn_ms " << m_Renderer.GetDenoiseMs() << std::endl; // TEMP: misura headless
+			const FrameRecord& latest = Profiler::Get().Latest();
+			if (getenv("PT_LOG_FPS")) std::cout << "PTFPS " << m_FPS << " pt_ms " << latest.GpuMs("Path tracer")
+			                                    << " dn_ms " << latest.GpuMs("Denoiser") << std::endl; // TEMP: misura headless (#37)
 			m_NFrames = 0;
 			m_ResetTimer = time;
 		}
@@ -1658,7 +1666,7 @@ namespace Lucerna {
 			if (ImGui::IsKeyPressed(ImGuiKey_G)) m_GizmoOperation = ImGuizmo::TRANSLATE;
 			if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoOperation = ImGuizmo::ROTATE;
 			if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoOperation = ImGuizmo::SCALE;
-			if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_Selection = {};
+			if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !(m_ProfilerFocused && Profiler::Get().Paused())) m_Selection = {};
 
 			if (ImGui::IsKeyPressed(ImGuiKey_Delete) && CanDeleteSelection())
 				m_DeleteRequested = true;
@@ -1668,7 +1676,9 @@ namespace Lucerna {
 		// In modalita' fuoco pero' si clicca per mettere a fuoco, anche sopra il gizmo.
 		const bool gizmoBusy = m_Selection.IsValid() && (ImGuizmo::IsOver() || ImGuizmo::IsUsing());
 
-		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_ViewportHovered && m_WindowEdges == 0 && (!gizmoBusy || m_FocusPickArmed)) {
+		const bool hudClicked = m_HudClicked;
+		m_HudClicked = false;
+		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_ViewportHovered && m_WindowEdges == 0 && !hudClicked && (!gizmoBusy || m_FocusPickArmed)) {
 			ImVec2 mouse = ImGui::GetMousePos();
 
 			// coordinate locali al rettangolo dell'immagine, non alla finestra OS

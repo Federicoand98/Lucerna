@@ -10,6 +10,7 @@
 #include "Editor/Document.h"
 #include "Core/Paths.h"
 #include "Core/Parallel.h"
+#include "Core/Profiler.h"
 
 #include <cstdio>
 #include <atomic>
@@ -51,6 +52,56 @@ int main() {
 		CHECK(once);
 	}
 	ParallelFor(0, [&](size_t) { CHECK(false); });
+
+	// Profiler: p99 nearest-rank, e la diagnosi dei tre casi (ADR 0023)
+	{
+		std::vector<float> values;
+		for (int i = 1; i <= 100; i++) values.push_back(static_cast<float>(i));
+		const Summary sum = Summarize(values);
+		CHECK(sum.Min == 1.0f && sum.Max == 100.0f && sum.P99 == 99.0f && sum.Avg == 50.5f);
+		CHECK(Summarize({}).Max == 0.0f && Summarize({ 3.0f }).P99 == 3.0f);
+
+		auto frame = [](float frameMs, float fence, float present, float pt) {
+			FrameRecord f;
+			f.FrameMs = frameMs; f.FenceMs = fence; f.PresentMs = present;
+			f.Gpu = { { "Path tracer", 0, pt }, { "Pass 1", 1, 0.5f } }; // una parte non conta nel totale
+			return f;
+		};
+		const FrameRecord gpuBound = frame(7.4f, 5.8f, 0.3f, 6.1f);   // aspetta la GPU, che lavora
+		const FrameRecord vsync = frame(13.9f, 0.1f, 12.5f, 6.1f);     // aspetta il display
+		const FrameRecord vsyncInFence = frame(13.9f, 12.0f, 0.2f, 1.0f); // il display, visto come fence
+		const FrameRecord cpuBound = frame(4.4f, 0.1f, 0.3f, 0.9f);    // la CPU lavora 4 ms
+		const FrameRecord gpuInPresent = frame(3.2f, 0.0f, 2.97f, 2.8f); // NVIDIA: aspetta la GPU nel present
+		CHECK(Diagnose({ &gpuInPresent }).Limit == Bottleneck::Gpu);
+		CHECK(std::abs(gpuInPresent.GpuWaitMs() - 2.8f) < 1e-4f && std::abs(gpuInPresent.PresentWaitMs() - 0.17f) < 1e-4f);
+		CHECK(Diagnose({ &gpuBound }).Limit == Bottleneck::Gpu);
+		CHECK(Diagnose({ &gpuBound }).TopPass == "Path tracer" && Diagnose({ &gpuBound }).GpuBusyMs == 6.1f);
+		CHECK(Diagnose({ &vsync }).Limit == Bottleneck::Present);
+		CHECK(Diagnose({ &vsyncInFence }).Limit == Bottleneck::Present);
+		CHECK(Diagnose({ &cpuBound }).Limit == Bottleneck::Cpu);
+		CHECK(Diagnose({}).Limit == Bottleneck::None);
+
+		// un giro aspetta i tempi GPU del suo frame; le build in Immediate vengono dopo le passate
+		Profiler& profiler = Profiler::Get();
+		profiler.Reset();
+		profiler.BeginFrame();
+		profiler.AddImmediateGpu({ "BLAS build", 0, 2.0f });
+		profiler.BeginFrame();                        // il primo giro ora aspetta la GPU
+		CHECK(profiler.History().empty());
+		profiler.AttachFrameGpu({ { "Path tracer", 0, 1.0f } });
+		CHECK(profiler.History().size() == 1 && profiler.History()[0].Gpu.size() == 2);
+		CHECK(profiler.History()[0].Gpu[0].Name == "Path tracer" && profiler.History()[0].Gpu[1].Name == "BLAS build");
+		profiler.AttachFrameGpu({ { "Path tracer", 0, 1.0f } }); // niente in attesa: si ignora
+		CHECK(profiler.History().size() == 1);
+		profiler.SetPaused(true);                     // in pausa lo storico resta, Latest no
+		profiler.BeginFrame();
+		profiler.AttachFrameGpu({ { "Path tracer", 0, 7.0f } });
+		CHECK(profiler.History().size() == 1 && profiler.Latest().GpuMs("Path tracer") == 7.0f);
+		profiler.BeginFrame();
+		profiler.BeginFrame();                        // un giro senza GPU (finestra ridotta) si tiene lo stesso
+		CHECK(profiler.Latest().Gpu.empty());
+		profiler.Reset();
+	}
 
 	// Nomi unici come in Blender
 	ObjectList<Thing> list("Thing");

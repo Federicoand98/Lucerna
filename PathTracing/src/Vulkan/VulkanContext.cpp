@@ -93,6 +93,9 @@ namespace Lucerna {
 		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 		vkCreateFence(m_Device, &fenceInfo, nullptr, &m_FrameFence);
 
+		m_FrameTimer.Initialize(64); // una ventina di scope per frame: path tracer, 5 passate del denoiser...
+		m_ImmediateTimer.Initialize(2);
+
 		VkSemaphoreCreateInfo semaphoreInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
 		vkCreateSemaphore(m_Device, &semaphoreInfo, nullptr, &m_ImageAvailable);
 
@@ -337,7 +340,15 @@ namespace Lucerna {
 	}
 
 	bool VulkanContext::BeginFrame() {
+		Profiler& profiler = Profiler::Get();
+		double start = Profiler::NowMs();
 		vkWaitForFences(m_Device, 1, &m_FrameFence, VK_TRUE, UINT64_MAX);
+		profiler.AddFenceWait(static_cast<float>(Profiler::NowMs() - start));
+		// il frame prima e' finito: i suoi timestamp ci sono
+		if (m_FrameSubmitted) {
+			profiler.AttachFrameGpu(m_FrameTimer.Collect());
+			m_FrameSubmitted = false;
+		}
 
 		// Il frame precedente e' finito: quello che aspettava questo momento si puo' distruggere.
 		FlushDeferred();
@@ -351,7 +362,9 @@ namespace Lucerna {
 			|| static_cast<uint32_t>(height) != m_SwapchainExtent.height)
 			CreateSwapchain();
 
+		start = Profiler::NowMs();
 		VkResult result = vkAcquireNextImageKHR(m_Device, m_Swapchain, UINT64_MAX, m_ImageAvailable, VK_NULL_HANDLE, &m_ImageIndex);
+		profiler.AddAcquire(static_cast<float>(Profiler::NowMs() - start));
 		if (result == VK_ERROR_OUT_OF_DATE_KHR) {
 			m_SwapchainDirty = true;
 			return false;
@@ -363,6 +376,7 @@ namespace Lucerna {
 		VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		vkBeginCommandBuffer(m_Cmd, &beginInfo);
+		m_FrameTimer.Reset(m_Cmd);
 		return true;
 	}
 
@@ -427,6 +441,7 @@ namespace Lucerna {
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = &m_RenderFinished[m_ImageIndex];
 		vkQueueSubmit(m_Queue, 1, &submitInfo, m_FrameFence);
+		m_FrameSubmitted = true;
 	}
 
 	void VulkanContext::PresentFrame() {
@@ -437,16 +452,24 @@ namespace Lucerna {
 		presentInfo.pSwapchains = &m_Swapchain;
 		presentInfo.pImageIndices = &m_ImageIndex;
 
+		const double start = Profiler::NowMs();
 		VkResult result = vkQueuePresentKHR(m_Queue, &presentInfo);
+		Profiler::Get().AddPresent(static_cast<float>(Profiler::NowMs() - start));
 		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
 			m_SwapchainDirty = true;
 	}
 
-	void VulkanContext::Immediate(const std::function<void(VkCommandBuffer)>& record) {
+	void VulkanContext::Immediate(const std::function<void(VkCommandBuffer)>& record, const char* gpuName) {
 		VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		vkBeginCommandBuffer(m_ImmediateCmd, &beginInfo);
+		if (gpuName) {
+			m_ImmediateTimer.Reset(m_ImmediateCmd);
+			m_ImmediateTimer.Begin(m_ImmediateCmd, gpuName);
+		}
 		record(m_ImmediateCmd);
+		if (gpuName)
+			m_ImmediateTimer.End(m_ImmediateCmd);
 
 		// La fence sincronizza la CPU, non la memoria: le scritture vanno rese visibili ai comandi
 		// che verranno dopo.
@@ -468,6 +491,9 @@ namespace Lucerna {
 		vkQueueSubmit(m_Queue, 1, &submitInfo, m_ImmediateFence);
 		vkWaitForFences(m_Device, 1, &m_ImmediateFence, VK_TRUE, UINT64_MAX);
 		vkResetFences(m_Device, 1, &m_ImmediateFence);
+		if (gpuName)
+			for (GpuTiming& timing : m_ImmediateTimer.Collect())
+				Profiler::Get().AddImmediateGpu(std::move(timing));
 		vkResetCommandBuffer(m_ImmediateCmd, 0);
 	}
 
@@ -623,6 +649,8 @@ namespace Lucerna {
 			vkDestroySemaphore(m_Device, m_ImageAvailable, nullptr);
 			vkDestroyFence(m_Device, m_FrameFence, nullptr);
 			vkDestroyFence(m_Device, m_ImmediateFence, nullptr);
+			m_FrameTimer.Release();
+			m_ImmediateTimer.Release();
 			vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
 			vkDestroyDevice(m_Device, nullptr);
 		}

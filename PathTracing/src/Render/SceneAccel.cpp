@@ -179,7 +179,7 @@ namespace Lucerna {
 
 		vk.Immediate([&](VkCommandBuffer cmd) {
 			Fn().CmdBuild(cmd, static_cast<uint32_t>(buildInfos.size()), buildInfos.data(), rangePointers.data());
-		});
+		}, "BLAS build");
 	}
 
 	void SceneAccel::BuildPrimitives(const std::vector<AABB>& bounds) {
@@ -229,7 +229,7 @@ namespace Lucerna {
 			VkAccelerationStructureBuildRangeInfoKHR range{};
 			range.primitiveCount = primitives;
 			const VkAccelerationStructureBuildRangeInfoKHR* rangePointer = &range;
-			vk.Immediate([&](VkCommandBuffer cmd) { Fn().CmdBuild(cmd, 1, &info, &rangePointer); });
+			vk.Immediate([&](VkCommandBuffer cmd) { Fn().CmdBuild(cmd, 1, &info, &rangePointer); }, "BLAS build");
 		}
 
 	}
@@ -297,6 +297,6 @@ namespace Lucerna {
 		VkAccelerationStructureBuildRangeInfoKHR range{};
 		range.primitiveCount = instanceCount;
 		const VkAccelerationStructureBuildRangeInfoKHR* rangePointer = &range;
-		vk.Immediate([&](VkCommandBuffer cmd) { Fn().CmdBuild(cmd, 1, &info, &rangePointer); });
+		vk.Immediate([&](VkCommandBuffer cmd) { Fn().CmdBuild(cmd, 1, &info, &rangePointer); }, "TLAS build");
 	}
 }

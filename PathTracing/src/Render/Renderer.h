@@ -52,8 +52,6 @@ namespace Lucerna {
 		std::string SaveScreenshot(const std::string& path = "");
 		void SaveHdr(const std::string& path);
 		void Release();
-		float GetPathTraceMs() const { return m_PathTraceMs; }
-		float GetDenoiseMs() const { return m_DenoiseMs; }
 	public:
 		RenderSettings Settings; // come si calcola l'immagine: si salva con la scena (ADR 0010)
 		ViewSettings View;       // cosa si guarda: mai salvato
@@ -61,7 +59,6 @@ namespace Lucerna {
 		void ResizeRenderTargets(uint32_t width, uint32_t height); // colore + AOV, stessa risoluzione
 		void ResizeDisplay(uint32_t width, uint32_t height);
 		void ReadImage(const GpuImage& image, void* pixels, size_t bytes);
-		void ReadTimestamps();
 	private:
 		RenderView m_View;
 		std::unique_ptr<RenderScene> m_Scene;  // la scena per la GPU, aggiornata da scena e asset a ogni frame
@@ -84,12 +81,6 @@ namespace Lucerna {
 		uint32_t m_DisplayVersion = 0;
 		int screenshotsCount = 0;
 
-		// Timestamp GPU: inizio e fine di path tracer e denoiser. I risultati sono del frame scorso.
-		VkQueryPool m_Timestamps = VK_NULL_HANDLE;
-		bool m_TimestampsWritten = false;
-		bool m_DenoiseWritten = false;
-		float m_PathTraceMs = 0.0f;
-		float m_DenoiseMs = 0.0f;
 		bool m_PickPending = false; // il dispatch del picking e' nel frame scorso, risultato da leggere
 
 		// Frame trascorsi da quando la camera si e' fermata. E' il proxy del minimo N sullo

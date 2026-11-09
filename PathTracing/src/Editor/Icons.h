@@ -53,5 +53,7 @@
 #define ICON_MINIMIZE       "\xee\x84\xa0" // minus
 #define ICON_MAXIMIZE       "\xee\x85\xab" // square
 #define ICON_RESTORE        "\xee\x82\xa2" // copy
+#define ICON_PROFILER       "\xee\x8a\xa5" // chart-line
+#define ICON_ZAP            "\xee\x86\xb4" // zap
 
 #endif // EDITOR_ICONS_H
