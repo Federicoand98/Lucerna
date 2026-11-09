@@ -1,4 +1,5 @@
 #include "Vulkan/TextureArray.h"
+#include "Core/Parallel.h"
 #include <cmath>
 #include <cstring>
 #include "stb/stb_image.h"
@@ -71,21 +72,30 @@ namespace Lucerna {
 		// l'origine delle UV in OBJ e' in basso a sinistra, quella di stb_image in alto
 		stbi_set_flip_vertically_on_load(true);
 
-		for (size_t layer = 0; layer < paths.size(); layer++) {
-			int width = 0, height = 0, channels = 0;
-			unsigned char* pixels = stbi_load(paths[layer].c_str(), &width, &height, &channels, 4);
-
+		// I layer sono indipendenti: ogni worker decodifica e ricampiona nel suo tratto dello
+		// staging. Il log si scrive dopo, in ordine di layer, cosi' resta uguale da un avvio all'altro.
+		struct Outcome { int Width = 0, Height = 0; const char* Failure = nullptr; };
+		std::vector<Outcome> outcomes(paths.size());
+		ParallelFor(paths.size(), [&](size_t layer) {
+			Outcome& outcome = outcomes[layer];
+			int channels = 0;
+			unsigned char* pixels = stbi_load(paths[layer].c_str(), &outcome.Width, &outcome.Height, &channels, 4);
 			if (pixels == nullptr) {
-				std::cerr << "Texture load failed: " << paths[layer] << " (" << stbi_failure_reason() << ")" << std::endl;
-				continue;
+				outcome.Failure = stbi_failure_reason(); // stb lo tiene per thread
+				return;
 			}
-
-			const std::vector<unsigned char> resampled = Resample(pixels, width, height, size);
+			const std::vector<unsigned char> resampled = Resample(pixels, outcome.Width, outcome.Height, size);
 			memcpy(mapped + layer * layerBytes, resampled.data(), layerBytes);
 			stbi_image_free(pixels);
+		});
 
-			std::cout << "Texture loaded: " << paths[layer] << " (" << width << "x" << height
-				<< " -> " << size << "x" << size << ", layer " << layer << ")" << std::endl;
+		for (size_t layer = 0; layer < paths.size(); layer++) {
+			const Outcome& outcome = outcomes[layer];
+			if (outcome.Failure)
+				std::cerr << "Texture load failed: " << paths[layer] << " (" << outcome.Failure << ")" << std::endl;
+			else
+				std::cout << "Texture loaded: " << paths[layer] << " (" << outcome.Width << "x" << outcome.Height
+					<< " -> " << size << "x" << size << ", layer " << layer << ")" << std::endl;
 		}
 
 		stbi_set_flip_vertically_on_load(false);

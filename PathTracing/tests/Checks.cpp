@@ -9,9 +9,12 @@
 #include "Serialization/SceneSerializer.h"
 #include "Editor/Document.h"
 #include "Core/Paths.h"
+#include "Core/Parallel.h"
 
 #include <cstdio>
+#include <atomic>
 #include <unordered_set>
+#include <vector>
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -33,6 +36,21 @@ int main() {
 	std::unordered_set<ObjectId> seen;
 	for (int i = 0; i < 10000; i++) seen.insert(ObjectId::Generate());
 	CHECK(seen.size() == 10000);
+
+	// ParallelFor: ogni indice una volta sola, anche annidato e su chiamate ripetute (il pool si riusa)
+	for (int round = 0; round < 50; round++) {
+		std::vector<std::atomic<int>> hits(1000);
+		ParallelFor(hits.size(), [&](size_t i) {
+			hits[i]++;
+			if (i % 100 == 0)
+				ParallelFor(3, [&](size_t) { hits[i]++; });
+		});
+		bool once = true;
+		for (size_t i = 0; i < hits.size(); i++)
+			once = once && hits[i] == (i % 100 == 0 ? 4 : 1);
+		CHECK(once);
+	}
+	ParallelFor(0, [&](size_t) { CHECK(false); });
 
 	// Nomi unici come in Blender
 	ObjectList<Thing> list("Thing");

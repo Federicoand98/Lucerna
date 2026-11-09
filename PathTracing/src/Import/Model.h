@@ -31,12 +31,9 @@ namespace Lucerna {
 
 	class Model {
 	public:
-		Model();
-		~Model();
-
 		void LoadObj(const char* filePath);
 
-		std::vector<Triangle*> GetTriangles() const { return m_Triangles; }
+		const std::vector<Triangle>& GetTriangles() const { return m_Triangles; }
 		int GetTrianglesCount() const { return m_TriangleCount; }
 		const std::vector<MtlMaterial>& GetMaterials() const { return m_Materials; } // vuoto = OBJ senza MTL
 		const std::string& GetName() const { return m_Name; }
@@ -46,17 +43,15 @@ namespace Lucerna {
 	private:
 		void MakeTriangles();
 		void CalculateBoundingBox();
-		void CleanTrash();
 		void ParseMtl(const std::string& mtlPath); // popola m_Materials
 	private:
 		int m_TriangleCount = 0;
 		std::string m_Name;
 		std::string m_Path;
-		std::vector<glm::vec3*> m_Vertices;
+		std::vector<glm::vec3> m_Vertices;
 		std::vector<glm::vec2> m_UVs;
-		std::vector<glm::vec3*> m_Normals;
-		std::vector<Face*> m_Faces;
-		std::vector<Triangle*> m_Triangles;
+		std::vector<Face> m_Faces;
+		std::vector<Triangle> m_Triangles;
 		std::vector<MtlMaterial> m_Materials;
 		glm::vec4 m_BoundsMin;
 		glm::vec4 m_BoundsMax;

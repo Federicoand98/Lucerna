@@ -71,10 +71,10 @@ namespace Lucerna {
 			asset.Triangles.clear();
 			asset.LocalMin = glm::vec4(1e30f);
 			asset.LocalMax = glm::vec4(-1e30f);
-			for (const Triangle* t : model.GetTriangles()) {
-				asset.LocalMin = glm::min(asset.LocalMin, glm::min(t->A, glm::min(t->B, t->C)));
-				asset.LocalMax = glm::max(asset.LocalMax, glm::max(t->A, glm::max(t->B, t->C)));
-				asset.Triangles.push_back(*t);
+			asset.Triangles = model.GetTriangles();
+			for (const Triangle& t : asset.Triangles) {
+				asset.LocalMin = glm::min(asset.LocalMin, glm::min(t.A, glm::min(t.B, t.C)));
+				asset.LocalMax = glm::max(asset.LocalMax, glm::max(t.A, glm::max(t.B, t.C)));
 			}
 		}
 	}
