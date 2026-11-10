@@ -125,3 +125,9 @@ layout(r32ui, binding = 21) uniform restrict writeonly uimage2D imgObjectId;
 uint EncodeObjectId(int type, int index) {
     return type < 0 || index < 0 ? 0u : (uint(type + 1) << 24) | uint(index);
 }
+
+// Le alias table dei triangoli emissivi, una dopo l'altra: una voce di tipo mesh della light list
+// usa le Lights[i].U.x caselle a partire da Lights[i].Meta.w (ADR 0025)
+layout(std430, binding = 22) restrict readonly buffer EmissiveSamplesBuffer {
+    EmissiveSample EmissiveSamples[];
+};

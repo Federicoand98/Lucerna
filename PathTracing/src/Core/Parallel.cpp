@@ -88,6 +88,10 @@ namespace Lucerna {
 		};
 	}
 
+	bool InsideParallelFor() {
+		return t_InsideParallelFor;
+	}
+
 	void ParallelFor(size_t count, const std::function<void(size_t)>& fn) {
 		if (count <= 1 || t_InsideParallelFor) {
 			for (size_t i = 0; i < count; i++)

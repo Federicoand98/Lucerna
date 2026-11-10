@@ -19,6 +19,7 @@ namespace Lucerna {
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 			VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+			VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		};
 
 		// Layout del PickBuffer: due int + un float, tutti scalari 4 byte. La sentinella e' -2,
@@ -96,7 +97,7 @@ namespace Lucerna {
 			.Buffer(12, scene.TriPositions()).Buffer(13, scene.Meshes()).Buffer(14, scene.TriNormals()).Buffer(15, m_Pick)
 			.Buffer(16, scene.TriUVs()).Buffer(17, scene.Lights()).AccelerationStructure(18, scene.TopLevel())
 			.Sampler(19, scene.DataTextures().Image(), scene.DataTextures().Sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.Buffer(20, m_RayCounter).Image(21, targets.ObjectIds)
+			.Buffer(20, m_RayCounter).Image(21, targets.ObjectIds).Buffer(22, scene.EmissiveSamples())
 			.Commit(cmd);
 
 		// ceil: con risoluzioni non multiple di 8 (es. render scale) la divisione intera

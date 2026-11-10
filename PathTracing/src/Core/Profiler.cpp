@@ -1,4 +1,5 @@
 #include "Core/Profiler.h"
+#include "Core/Parallel.h"
 
 #include <algorithm>
 #include <fstream>
@@ -148,7 +149,9 @@ namespace Lucerna {
 	}
 
 	bool Profiler::BeginScope(std::string_view name) {
-		if (std::this_thread::get_id() != m_MainThread)
+		// Anche il main thread lavora dentro un ParallelFor: lo scope registrerebbe solo gli indici
+		// che gli capitano, cioe' un numero che dipende da come si dividono. Dentro non conta nessuno.
+		if (std::this_thread::get_id() != m_MainThread || InsideParallelFor())
 			return false;
 		FrameRecord& current = Current();
 		if (current.Cpu.size() >= MaxScopes)

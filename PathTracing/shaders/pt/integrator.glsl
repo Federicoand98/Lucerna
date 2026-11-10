@@ -98,18 +98,25 @@ vec3 PerPixel(vec2 ndc) {
         BsdfParams pr = GetBsdfParams(hit, material, i == 0 ? 0.0 : SECONDARY_TEXTURE_LOD);
 
         // (2) NEE: campiona una luce e aggiungi il contributo diretto (solo superfici esterne;
-        //     dentro un mezzo la rifrazione all'uscita renderebbe il sample errato).
-        if(numLights > 0 && !hit.Inside) {
-            vec3 wi; float dist; vec3 Lrad; float pdfLight; bool deltaLight;
-            if(SampleLight(hit.HitPosition, wi, dist, Lrad, pdfLight, deltaLight) && pdfLight > 1e-8) {
-                // Col normal map la luce deve stare sopra anche la superficie vera, non solo
-                // sopra la normale di shading: altrimenti illuminerebbe da sotto (ADR 0007).
-                if(dot(N, wi) > 0.0 && (material.NormalTexture < 0.0 || dot(hit.GeoNormal, wi) > 0.0)) {
+        //     dentro un mezzo la rifrazione all'uscita renderebbe il sample errato). Non
+        //     all'ultimo vertice: il raggio BSDF che e' la sua meta' nella MIS non si traccia
+        //     piu', e la NEE da sola aggiungerebbe una parte di path lunghi rayDepth + 1 che con
+        //     la NEE spenta non ci sono (NEE accesa e spenta stimerebbero due integrali diversi).
+        if(numLights > 0 && !hit.Inside && i + 1 < rayDepth) {
+            vec3 wi; float dist; vec3 Lrad; float pdfLight; bool deltaLight; vec3 target;
+            if(SampleLight(hit.HitPosition, wi, dist, Lrad, pdfLight, deltaLight, target) && pdfLight > 1e-8) {
+                // La luce deve stare sopra anche la superficie vera, non solo sopra la normale di
+                // shading (liscia o col normal map): altrimenti illuminerebbe da sotto (ADR 0007).
+                if(dot(N, wi) > 0.0 && dot(hit.GeoNormal, wi) > 0.0) {
                     vec3 f; float pdfBsdfDir;
                     EvalBsdf(pr, N, V, wi, f, pdfBsdfDir);
                     if(any(greaterThan(f, vec3(0.0)))) {
+                        // dall'origine spostata al punto staccato dall'emettitore (ShadowTarget): il
+                        // segmento non tocca ne' la superficie di partenza ne' l'emettitore stesso
                         vec3 sorigin = hit.HitPosition + hit.GeoNormal * 0.001;
-                        if(!Occluded(sorigin, wi, dist - 0.002)) {
+                        vec3 toTarget = target - sorigin;
+                        float shadowDist = length(toTarget);
+                        if(shadowDist > 1e-6 && !Occluded(sorigin, toTarget / shadowDist, shadowDist)) {
                             // una luce delta la trova solo la NEE: niente da bilanciare
                             float w = deltaLight ? 1.0 : pdfLight / (pdfLight + pdfBsdfDir);
                             light += throughput * f * dot(N, wi) * Lrad / pdfLight * w;
@@ -126,9 +133,9 @@ vec3 PerPixel(vec2 ndc) {
         throughput *= bsdfWeight;
 
         // Una direzione sopra la normale di shading ma sotto la superficie vera attraverserebbe
-        // la geometria: il cammino si chiude (ADR 0007). Senza normal map le due normali
-        // coincidono e il caso non esiste.
-        if(!delta && material.NormalTexture >= 0.0 && dot(ray.Direction, hit.GeoNormal) <= 0.0)
+        // la geometria: il cammino si chiude (ADR 0007). Succede col normal map e con le normali
+        // lisce delle mesh; una rifrazione va sotto anche la normale di shading e non e' toccata.
+        if(dot(ray.Direction, N) > 0.0 && dot(ray.Direction, hit.GeoNormal) <= 0.0)
             break;
         prevPdfBsdf = pdfBsdf;
         prevDelta = delta;

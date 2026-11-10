@@ -1,5 +1,7 @@
 #pragma once
 
+#include <map>
+
 #ifndef RENDER_RENDERSCENE_H
 #define RENDER_RENDERSCENE_H
 
@@ -48,6 +50,7 @@ namespace Lucerna {
 		const GpuBuffer& TriNormals() const { return m_TriNormals; }
 		const GpuBuffer& TriUVs() const { return m_TriUVs; }
 		const GpuBuffer& Lights() const { return m_Lights; }
+		const GpuBuffer& EmissiveSamples() const { return m_EmissiveBuffer; }
 		const VkAccelerationStructureKHR& TopLevel() const { return m_Accel.TopLevel(); }
 		const AccelStats& Accel() const { return m_Accel.Stats(); }
 		std::vector<MeshAccelRow> MeshAccel() const; // una riga per asset con un BLAS
@@ -89,6 +92,20 @@ namespace Lucerna {
 		std::unordered_map<ObjectId, int> m_AssetBlas;      // asset di geometria -> indice in m_AssetRanges
 		std::vector<MeshInfo> m_AssetRanges;  // per asset usato: triangoli e partizione, il suo BLAS
 		std::vector<std::string> m_AssetNames; // per asset usato, per il profiler
+		// Per triangolo, nell'ordine dei buffer GPU: l'area locale e il materiale (-1 = quello
+		// dell'istanza). Bastano a ricostruire le tabelle dei triangoli emissivi senza la geometria.
+		std::vector<float> m_TriangleArea;
+		std::vector<int> m_TriangleMaterial;
+		// Le alias table dei triangoli emissivi, una per (asset, materiale dell'istanza), tutte
+		// in un buffer (ADR 0025). Si rifanno quando cambiano geometria, istanze o materiali.
+		struct EmissiveTable {
+			uint32_t Offset = 0, Count = 0;
+			float Total = 0.0f;
+		};
+		std::map<std::pair<int, int>, EmissiveTable> m_EmissiveTables;
+		std::vector<GpuEmissiveSample> m_EmissiveSamples;
+		GpuBuffer m_EmissiveBuffer;
+		bool m_EmissiveDirty = true;
 		std::vector<MeshInfo> m_MeshInfos;    // per istanza: l'ingresso della TLAS
 		std::vector<int> m_InstanceBlas;      // per istanza: il BLAS del suo asset, -1 = nessuno
 

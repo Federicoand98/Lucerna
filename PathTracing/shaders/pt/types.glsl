@@ -29,6 +29,15 @@ struct MeshInfo {
     float NumTriangles;
     float MaterialIndex;
     float NumOpaque;  // i primi NumOpaque triangoli sono la geometria opaca del BLAS, gli altri la mascherata
+    vec4 Emitter;     // x = la sua voce nella light list, -1 = non emette (ADR 0025)
+};
+
+// Una casella della alias table dei triangoli emissivi di un'istanza (ADR 0025)
+struct EmissiveSample {
+    float Prob;
+    int Triangle;
+    int AliasTriangle;
+    float Padding;
 };
 
 // Posizioni e normali sono in due buffer separati: le posizioni sono anche l'ingresso dei BLAS,
@@ -96,7 +105,7 @@ struct Light {
     vec4 U;         // quad: spigolo U ; sfera: inutilizzato
     vec4 V;         // quad: spigolo V ; sfera: inutilizzato
     vec4 Normal;    // quad: normale ; sfera: inutilizzato
-    ivec4 Meta;     // x = tipo (0 sfera, 1 quad, 2 Sole, 3 punto, 4 spot), y = objType, z = objIndex
+    ivec4 Meta;     // x = tipo (0 sfera, 1 quad, 2 Sole, 3 punto, 4 spot, 5 mesh), y = objType, z = objIndex, w = mesh: inizio della alias table
 };
 
 // Parametri del BSDF derivati dal materiale (nessun RNG): condivisi tra il sampling (BSDF)
@@ -122,8 +131,10 @@ struct HitInfo {
     bool Inside;
     vec2 UV;
     int MaterialIndex; // materiale gia' risolto: per-triangolo sulle mesh, altrimenti dell'oggetto
-    // Normal e' la normale di SHADING (col normal map, se c'e'); GeoNormal quella senza normal
-    // map, orientata allo stesso modo. Gli offset dei raggi e il test d'orizzonte usano GeoNormal:
-    // la normale perturbata puo' puntare sotto la superficie vera (ADR 0007).
+    // Normal e' la normale di SHADING (liscia, col normal map se c'e'); GeoNormal quella della
+    // superficie vera, orientata allo stesso modo: per le mesh la normale della faccia, per sfere e
+    // quad la stessa di Normal. Gli offset dei raggi e il test d'orizzonte usano GeoNormal: la
+    // normale di shading puo' puntare sotto la superficie vera (ADR 0007).
     vec3 GeoNormal;
+    int Triangle; // il triangolo colpito di una mesh (indice nei buffer dei triangoli), -1 altrimenti
 };

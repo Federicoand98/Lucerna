@@ -1,4 +1,5 @@
 #include "Render/RenderScene.h"
+#include "Core/AliasTable.h"
 #include "Core/Profiler.h"
 
 #include "stb/stb_image.h"
@@ -8,7 +9,7 @@ namespace Lucerna {
 
 	namespace {
 		// Gli emettitori per la NEE: sfere e quad con materiale emissivo, il Sole, le luci punto e
-		// spot. I triangoli emissivi delle mesh sono esclusi (nessuna scena li usa; li campiona il BSDF).
+		// spot. Le istanze di mesh emissive si aggiungono in BuildLights (ADR 0025).
 		std::vector<GPULight> CollectLights(const Scene& scene, const AssetLibrary& assets, const std::unordered_map<ObjectId, int>& materialIndex) {
 			std::vector<GPULight> lights;
 
@@ -197,7 +198,7 @@ namespace Lucerna {
 
 	RenderScene::~RenderScene() {
 		VulkanContext& vk = VulkanContext::Get();
-		for (GpuBuffer* buffer : { &m_Spheres, &m_Materials, &m_Quads, &m_Meshes, &m_Lights, &m_TriPositions, &m_TriNormals, &m_TriUVs })
+		for (GpuBuffer* buffer : { &m_Spheres, &m_Materials, &m_Quads, &m_Meshes, &m_Lights, &m_TriPositions, &m_TriNormals, &m_TriUVs, &m_EmissiveBuffer })
 			vk.DestroyBuffer(*buffer);
 		vk.DestroyImage(m_Environment);
 		vkDestroySampler(vk.Device(), m_EnvironmentSampler, nullptr);
@@ -387,8 +388,11 @@ namespace Lucerna {
 			m_NumMaterials = static_cast<int>(materials.size());
 		}
 
-		// la light list dipende dalle primitive emissive, dai loro materiali, dal Sole e dalle luci
-		if (changes & (PrimitivesChanged | MaterialsChanged | LightsChanged)) {
+		// La light list dipende dalle primitive emissive, dai materiali, dal Sole e dalle luci, e dalle
+		// istanze di mesh: le emissive sono voci della lista, e il MeshInfo ne porta l'indice
+		if (changes & MaterialsChanged)
+			m_EmissiveDirty = true; // un'emissione cambiata cambia i pesi dei triangoli
+		if ((changes & (PrimitivesChanged | MaterialsChanged | LightsChanged | GeometryChanged | InstancesChanged | MeshesChanged)) || materialsAdded) {
 			PROFILE_SCOPE("Light list");
 			BuildLights(scene, assets);
 		}
@@ -414,6 +418,9 @@ namespace Lucerna {
 		std::vector<TrianglePosition> positions;
 		std::vector<TriangleNormal> normals;
 		std::vector<TriangleUV> uvs;
+		m_TriangleArea.clear();
+		m_TriangleMaterial.clear();
+		m_EmissiveDirty = true;
 		m_AssetRanges.clear();
 		m_AssetNames.clear();
 		m_AssetBlas.clear();
@@ -453,7 +460,10 @@ namespace Lucerna {
 				positions.push_back({ t.A, t.B, t.C });
 				normals.push_back({ t.NormalA, t.NormalB, t.NormalC });
 				// A.z porta il materiale del triangolo (-1 = quello dell'istanza); B/C restano liberi
-				uvs.push_back({ glm::vec4(t.UVA, materialOf(t), 0.0f), glm::vec4(t.UVB, 0.0f, 0.0f), glm::vec4(t.UVC, 0.0f, 0.0f) });
+				const float material = materialOf(t);
+				uvs.push_back({ glm::vec4(t.UVA, material, 0.0f), glm::vec4(t.UVB, 0.0f, 0.0f), glm::vec4(t.UVC, 0.0f, 0.0f) });
+				m_TriangleArea.push_back(0.5f * glm::length(glm::cross(glm::vec3(t.B - t.A), glm::vec3(t.C - t.A))));
+				m_TriangleMaterial.push_back(static_cast<int>(material));
 			}
 		}
 		Upload(m_TriPositions, positions.data(), sizeof(TrianglePosition) * positions.size(), MemoryCategory::TriangleBuffers);
@@ -486,11 +496,80 @@ namespace Lucerna {
 	}
 
 	void RenderScene::BuildLights(const Scene& scene, const AssetLibrary& assets) {
-		const std::vector<GPULight> lights = CollectLights(scene, assets, m_MaterialIndex);
+		std::vector<GPULight> lights = CollectLights(scene, assets, m_MaterialIndex);
+
+		// Le istanze di mesh con triangoli emissivi (ADR 0025): una voce ciascuna, che sceglie il
+		// triangolo con la alias table del suo (asset, materiale dell'istanza). Il peso di un
+		// triangolo e' area locale per luminanza dell'emissione: EmissiveWeight nello shader lo
+		// ricalcola uguale, per la pdf della NEE e per la MIS.
+		const int numMaterials = static_cast<int>(assets.Materials().size());
+		std::vector<float> luminance(numMaterials, 0.0f);
+		for (int i = 0; i < numMaterials; i++) {
+			const Material& m = assets.Materials()[i];
+			const float lum = glm::dot(glm::vec3(m.EmissiveColor) * m.EmissiveStrenght, glm::vec3(0.2126f, 0.7152f, 0.0722f));
+			luminance[i] = lum > 1e-4f ? lum : 0.0f;
+		}
+		if (m_EmissiveDirty) {
+			m_EmissiveTables.clear();
+			m_EmissiveSamples.clear();
+		}
+		bool tablesGrew = m_EmissiveDirty;
+		for (size_t i = 0; i < m_MeshInfos.size(); i++) {
+			MeshInfo& info = m_MeshInfos[i];
+			info.Emitter = glm::vec4(-1.0f, 0.0f, 0.0f, 0.0f);
+			const int range = i < m_InstanceBlas.size() ? m_InstanceBlas[i] : -1;
+			if (range < 0 || numMaterials == 0)
+				continue;
+			// come HandleHit: un triangolo senza materiale suo prende quello dell'istanza, clampato
+			const int instanceMaterial = glm::clamp(static_cast<int>(info.MaterialIndex), 0, numMaterials - 1);
+			const auto key = std::make_pair(range, instanceMaterial);
+			auto found = m_EmissiveTables.find(key);
+			if (found == m_EmissiveTables.end()) {
+				PROFILE_SCOPE("Emissive triangle table");
+				const uint32_t first = static_cast<uint32_t>(m_AssetRanges[range].FirstTriangle);
+				const uint32_t count = static_cast<uint32_t>(m_AssetRanges[range].NumTriangles);
+				std::vector<float> weights;
+				std::vector<int> triangles;
+				double total = 0.0;
+				for (uint32_t t = first; t < first + count && t < m_TriangleArea.size(); t++) {
+					const int material = m_TriangleMaterial[t] >= 0 ? glm::clamp(m_TriangleMaterial[t], 0, numMaterials - 1) : instanceMaterial;
+					const float weight = m_TriangleArea[t] * luminance[material];
+					if (weight <= 0.0f)
+						continue;
+					weights.push_back(weight);
+					triangles.push_back(static_cast<int>(t));
+					total += weight;
+				}
+				EmissiveTable table;
+				if (!weights.empty()) {
+					table = { static_cast<uint32_t>(m_EmissiveSamples.size()), static_cast<uint32_t>(weights.size()), static_cast<float>(total) };
+					for (const AliasEntry& entry : BuildAliasTable(weights)) {
+						const size_t k = m_EmissiveSamples.size() - table.Offset;
+						m_EmissiveSamples.push_back({ entry.Prob, triangles[k], triangles[entry.Alias], 0.0f });
+					}
+					tablesGrew = true;
+				}
+				found = m_EmissiveTables.emplace(key, table).first;
+			}
+			const EmissiveTable& table = found->second;
+			if (table.Count == 0)
+				continue;
+			GPULight L;
+			L.Emission = glm::vec4(1.0f, 1.0f, 1.0f, table.Total); // la radianza viene dal materiale del triangolo
+			L.U = glm::vec4(static_cast<float>(table.Count), 0.0f, 0.0f, 0.0f);
+			L.Meta = glm::ivec4(5, 2, static_cast<int>(i), static_cast<int>(table.Offset));
+			info.Emitter.x = static_cast<float>(lights.size());
+			lights.push_back(L);
+		}
+		m_EmissiveDirty = false;
+		if (tablesGrew)
+			Upload(m_EmissiveBuffer, m_EmissiveSamples.data(), sizeof(GpuEmissiveSample) * m_EmissiveSamples.size());
+		Upload(m_Meshes, m_MeshInfos.data(), sizeof(MeshInfo) * m_MeshInfos.size());
+
 		m_NumLights = static_cast<int>(lights.size());
 		if (getenv("PT_LIGHTS"))
 			std::cout << "PTLIGHTS " << m_NumLights << " spheres=" << scene.Spheres().size()
-			          << " quads=" << scene.Quads().size() << std::endl;
+			          << " quads=" << scene.Quads().size() << " emissive triangles=" << m_EmissiveSamples.size() << std::endl;
 		Upload(m_Lights, lights.data(), sizeof(GPULight) * lights.size());
 
 		m_SunDirection = m_SunRadiance = glm::vec4(0.0f);

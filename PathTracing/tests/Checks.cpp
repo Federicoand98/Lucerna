@@ -12,10 +12,12 @@
 #include "Core/Paths.h"
 #include "Core/Parallel.h"
 #include "Core/Profiler.h"
+#include "Core/AliasTable.h"
 
 #include <cstdio>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <chrono>
@@ -222,6 +224,38 @@ int main() {
 	}
 #endif
 
+	// Alias table (ADR 0025): ogni indice esce con probabilita' peso / totale, esattamente
+	{
+		auto probabilities = [](const std::vector<AliasEntry>& table) {
+			std::vector<double> p(table.size(), 0.0);
+			for (size_t k = 0; k < table.size(); k++) {
+				p[k] += table[k].Prob / table.size();
+				p[table[k].Alias] += (1.0 - table[k].Prob) / table.size();
+			}
+			return p;
+		};
+		const std::vector<float> weights = { 1.0f, 0.0f, 7.0f, 2.0f, 0.5f, 0.0f, 3.5f };
+		const std::vector<AliasEntry> table = BuildAliasTable(weights);
+		const std::vector<double> p = probabilities(table);
+		CHECK(table.size() == weights.size());
+		bool exact = true;
+		for (size_t i = 0; i < weights.size(); i++)
+			exact = exact && std::abs(p[i] - weights[i] / 14.0) < 1e-6;
+		CHECK(exact);
+		CHECK(BuildAliasTable({}).empty() && BuildAliasTable({ 0.0f, -1.0f }).empty());
+		CHECK(BuildAliasTable({ 5.0f }).size() == 1 && BuildAliasTable({ 5.0f })[0].Prob == 1.0f);
+		// tanti pesi molto diversi, come i triangoli di una mesh: l'errore resta piccolo
+		std::vector<float> many(100000);
+		double total = 0.0;
+		for (size_t i = 0; i < many.size(); i++)
+			total += many[i] = (i % 97 == 0) ? 1000.0f : 0.001f * float(i % 13 + 1);
+		const std::vector<double> pm = probabilities(BuildAliasTable(many));
+		double worst = 0.0;
+		for (size_t i = 0; i < many.size(); i++)
+			worst = std::max(worst, std::abs(pm[i] - many[i] / total) / (many[i] / total));
+		CHECK(worst < 1e-3);
+	}
+
 	// Nomi unici come in Blender
 	ObjectList<Thing> list("Thing");
 	CHECK(list.Add({}).Name == "Thing");
@@ -322,10 +356,11 @@ int main() {
 
 	// Scene integrate (issue #28): i file di res/scenes/builtin, per numero o per nome
 	const std::vector<BuiltinScene> builtin = ListBuiltinScenes("res/scenes/builtin");
-	CHECK(builtin.size() == 12 && builtin.front().Number == 0 && builtin.back().Number == 13);
+	CHECK(builtin.size() == 13 && builtin.front().Number == 0 && builtin.back().Number == 14);
 	CHECK(FindBuiltinScene(builtin, "6") != nullptr && FindBuiltinScene(builtin, "6")->Key == "setup-2");
 	CHECK(FindBuiltinScene(builtin, "sponza") != nullptr && FindBuiltinScene(builtin, "sponza")->Number == 8);
-	CHECK(FindBuiltinScene(builtin, "zero-day") == &builtin.back());
+	CHECK(FindBuiltinScene(builtin, "zero-day") != nullptr && FindBuiltinScene(builtin, "zero-day")->Number == 13);
+	CHECK(FindBuiltinScene(builtin, "cornell-emissive-mesh") == &builtin.back());
 	CHECK(FindBuiltinScene(builtin, "4") != nullptr && FindBuiltinScene(builtin, "4")->DisplayName == "Cornell Box Meshes");
 	CHECK(FindBuiltinScene(builtin, "1") == nullptr && FindBuiltinScene(builtin, "") == nullptr);  // le scene casuali non ci sono piu'
 

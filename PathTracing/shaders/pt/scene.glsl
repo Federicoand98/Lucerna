@@ -6,7 +6,7 @@ Ray CalculateRayFromCamera(mat4 inverseProj, mat4 inverseView, vec3 cameraPos, v
 }
 
 HitInfo NoHit() {
-    return HitInfo(-1.0, vec3(0.0), vec3(0.0), -1, -1, false, vec2(0.0), -1, vec3(0.0));
+    return HitInfo(-1.0, vec3(0.0), vec3(0.0), -1, -1, false, vec2(0.0), -1, vec3(0.0), -1);
 }
 
 // Applica il normal map alla normale di shading N. La tangente si ricava per triangolo dalle
@@ -57,7 +57,7 @@ HitInfo HandleHit(Ray ray, float hitDistance, int index, int objType, bool insid
         vec3 normal = normalize(hitPosition);
         hitPosition += closestPosition;
 
-        hit = HitInfo(hitDistance, hitPosition, normal, index, 0, insideHit, SphereUV(normal), int(Spheres[index].Mat), normal);
+        hit = HitInfo(hitDistance, hitPosition, normal, index, 0, insideHit, SphereUV(normal), int(Spheres[index].Mat), normal, -1);
     }
     else if(objType == 1) { // QUAD
         Quad quad = Quads[index];
@@ -70,7 +70,7 @@ HitInfo HandleHit(Ray ray, float hitDistance, int index, int objType, bool insid
 
         hitPosition += closestPosition;
 
-        hit = HitInfo(hitDistance, hitPosition, normal, index, 1, insideHit, uv, int(Quads[index].MaterialIndex), normal);
+        hit = HitInfo(hitDistance, hitPosition, normal, index, 1, insideHit, uv, int(Quads[index].MaterialIndex), normal, -1);
     }
     else if(objType == 2) { // MESH
         // il raggio e' in world space e t e' lo stesso nei due spazi (direzione locale
@@ -113,11 +113,21 @@ HitInfo HandleHit(Ray ray, float hitDistance, int index, int objType, bool insid
         if(inside)
             normal = -normal;
 
+        // La normale della faccia, orientata come quella liscia: e' la superficie vera. Una
+        // direzione sopra la normale liscia puo' stare sotto la faccia, e un raggio li' entrerebbe
+        // nella mesh raccogliendo luce dall'interno (ADR 0007, issue #16).
+        TrianglePosition tp = TriPositions[index];
+        vec3 faceNormal = normalize(normalMatrix * cross(tp.B.xyz - tp.A.xyz, tp.C.xyz - tp.A.xyz));
+        if(dot(ray.Direction, faceNormal) > 0.0)
+            faceNormal = -faceNormal;
+        if(inside)
+            faceNormal = -faceNormal;
+
         vec3 shadingNormal = normal;
         if(material.NormalTexture >= 0.0)
             shadingNormal = ApplyNormalMap(normal, index, meshIndex, tuv, uv, material, lod);
 
-        hit = HitInfo(hitDistance, hitPosition, shadingNormal, meshIndex, 2, inside, uv, triMaterial, normal);
+        hit = HitInfo(hitDistance, hitPosition, shadingNormal, meshIndex, 2, inside, uv, triMaterial, faceNormal, index);
     }
 
     return hit;

@@ -114,7 +114,18 @@ namespace Lucerna {
 		float NumTriangles = 0;
 		float MaterialIndex = 0;
 		float NumOpaque = 0;
+		glm::vec4 Emitter{ -1.0f, 0.0f, 0.0f, 0.0f }; // x = la sua voce nella light list, -1 = non emette (ADR 0025)
 	};
+
+	// Una casella della alias table dei triangoli emissivi di un'istanza: i due triangoli tra cui
+	// sceglie, gia' come indici nei buffer dei triangoli (ADR 0025)
+	struct GpuEmissiveSample {
+		float Prob = 1.0f;
+		int Triangle = 0;
+		int AliasTriangle = 0;
+		float Padding = 0.0f;
+	};
+	static_assert(sizeof(GpuEmissiveSample) == 16, "GpuEmissiveSample deve combaciare con lo std430 dello shader");
 
 	// Emettitore per la Next Event Estimation (light sampling + MIS), uno per sfera/quad emissivo,
 	// Sole, luce punto o spot. Solo vec4/ivec4 -> stride 96, niente padding.
@@ -124,11 +135,11 @@ namespace Lucerna {
 		glm::vec4 U{ 0.0f };         // quad: vettore-spigolo U (fisico) ; sfera: inutilizzato
 		glm::vec4 V{ 0.0f };         // quad: vettore-spigolo V (fisico) ; sfera: inutilizzato
 		glm::vec4 Normal{ 0.0f };    // quad: normale.xyz ; sfera: inutilizzato
-		glm::ivec4 Meta{ 0 };        // x = tipo (0 sfera, 1 quad, 2 Sole, 3 punto, 4 spot), y = objType, z = objIndex
+		glm::ivec4 Meta{ 0 };        // x = tipo (0 sfera, 1 quad, 2 Sole, 3 punto, 4 spot, 5 mesh), y = objType, z = objIndex, w = mesh: inizio della sua alias table
 	};
 
 	static_assert(sizeof(GPULight) == 96, "GPULight deve essere 96 byte per combaciare con lo std430");
-	static_assert(sizeof(MeshInfo) == 208, "MeshInfo deve combaciare con lo std430 dello shader");
+	static_assert(sizeof(MeshInfo) == 224, "MeshInfo deve combaciare con lo std430 dello shader");
 }
 
 #endif // RENDER_GPUTYPES_H
