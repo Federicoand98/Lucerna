@@ -17,7 +17,7 @@ namespace Lucerna {
 		// Deve combaciare con il blocco push_constant di Tonemap.comp.
 		struct TonemapParams {
 			float Exposure;
-			int PostProcessing;
+			int ToneMapper;
 			int AovView;
 			int SelectedCount;
 			uint32_t Selected[Renderer::MaxSelectedIds];
@@ -253,7 +253,7 @@ namespace Lucerna {
 
 		{
 			GpuScope scope(cmd, "Tonemap");
-			TonemapParams tonemap = { Settings.Exposure, Settings.Tonemap ? 1 : 0, View.AOVView, 0, {} };
+			TonemapParams tonemap = { Settings.Exposure, static_cast<int>(Settings.ToneMap), View.AOVView, 0, {} };
 			for (uint32_t id : m_SelectedIds)
 				if (tonemap.SelectedCount < MaxSelectedIds)
 					tonemap.Selected[tonemap.SelectedCount++] = id;

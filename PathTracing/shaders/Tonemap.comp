@@ -1,8 +1,10 @@
 #version 460 core
 
-// Ultima passata: HDR lineare -> esposizione -> [ACES] -> encoding sRGB, verso l'immagine
+// Ultima passata: HDR lineare -> esposizione -> tonemap -> encoding sRGB, verso l'immagine
 // RGBA8 mostrata da ImGui. La sorgente si campiona con un sampler e non con imageLoad: con il
 // render scale puo' essere piu' piccola del viewport e va ingrandita in bilineare.
+
+#include "common/tonemap.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -15,8 +17,8 @@ const int MAX_SELECTED = 8; // un box sono 6 quad
 
 layout(push_constant) uniform Params {
     float Exposure;
-    int   PostProcessing;
-    int   aovView;   // 0 = beauty (tonemap normale); != 0 = vista AOV (niente esposizione/ACES)
+    int   toneMapper; // TONEMAP_* in common/tonemap.glsl
+    int   aovView;   // 0 = beauty (tonemap normale); != 0 = vista AOV (niente esposizione/tonemap)
     int   selectedCount;
     uint  selected[MAX_SELECTED]; // gli id della selezione: il contorno segue i loro pixel
 };
@@ -37,15 +39,6 @@ vec3 LinearToSRGB(vec3 rgb, float gamma) {
     return mix(pow(rgb, vec3(1.0 / gamma)) * 1.055 - 0.055, rgb * 12.92, lessThan(rgb, vec3(0.0031308)));
 }
 
-vec3 ACESFilm(vec3 x) {
-    float a = 2.51;
-    float b = 0.03;
-    float c = 2.43;
-    float d = 0.59;
-    float e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
-}
-
 void main() {
     ivec2 size = imageSize(imgOut);
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
@@ -58,8 +51,7 @@ void main() {
     // senza esposizione ne' tonemap (falserebbero normali/depth); solo l'encoding sRGB.
     if(aovView == 0) {
         color *= Exposure;                      // esposizione: moltiplicatore lineare
-        if(PostProcessing == 1)
-            color = ACESFilm(color);            // tonemap HDR -> [0,1] (clampa gia' lui)
+        color = ToneMap(color, toneMapper);     // HDR -> [0,1]
     }
 
     // Encoding sRGB SEMPRE: l'immagine non e' sRGB e ImGui non converte. Senza tonemap i valori

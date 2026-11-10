@@ -112,7 +112,7 @@ void main() {
     imageStore(imgIrradiance, texelCoord, vec4(accIrr, N));
 
     // Vista di debug: al posto del beauty scrive un AOV, in forma visualizzabile. Il fragment
-    // finale (aovView != 0) lo mostra saltando esposizione/ACES. Gli AOV veri sono gia' scritti.
+    // finale (aovView != 0) lo mostra saltando esposizione e tonemap. Gli AOV veri sono gia' scritti.
     if(aovView == 1) { imageStore(imgOutput, texelCoord, vec4(aovAlbedo, 1.0)); return; }
     if(aovView == 2) { imageStore(imgOutput, texelCoord, vec4(aovNormal * 0.5 + 0.5, 1.0)); return; }
     if(aovView == 3) { float d = aovDepth / (aovDepth + 10.0); imageStore(imgOutput, texelCoord, vec4(vec3(d), 1.0)); return; }

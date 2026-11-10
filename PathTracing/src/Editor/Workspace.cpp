@@ -786,7 +786,11 @@ namespace Lucerna {
 	// Esposizione e tonemap agiscono dopo l'accumulo: non lo fanno ripartire
 	void Application::DrawFilmSection() {
 		if (UI::Section("Film")) {
-			UI::Checkbox("ACES tonemap", &m_Renderer.Settings.Tonemap);
+			static constexpr const char* labels[] = { "None", "ACES", "ACES (fitted)", "AgX", "Khronos PBR Neutral", "Reinhard", "Hable" };
+			static_assert(std::size(labels) == std::size(ToneMapperKeys));
+			int mapper = static_cast<int>(m_Renderer.Settings.ToneMap);
+			if (UI::Combo("Tone mapping", &mapper, labels, static_cast<int>(std::size(labels))))
+				m_Renderer.Settings.ToneMap = static_cast<ToneMapper>(mapper);
 			UI::SliderFloat("Exposure", &m_Renderer.Settings.Exposure, 0.0f, 10.0f, "%.2f");
 		}
 	}

@@ -5,7 +5,16 @@
 
 #include "Core/Fields.h"
 
+#include <iterator>
+#include <string>
+
 namespace Lucerna {
+
+	// L'operatore che porta l'HDR sul display. L'ordine combacia con TONEMAP_* in
+	// shaders/common/tonemap.glsl e con ToneMapperKeys.
+	enum class ToneMapper : int { None, ACES, ACESFitted, AgX, Neutral, Reinhard, Hable };
+	// le chiavi nel file di scena
+	inline constexpr const char* ToneMapperKeys[] = { "none", "aces", "acesFitted", "agx", "neutral", "reinhard", "hable" };
 
 	// Come si calcola l'immagine (ADR 0010): stessa scena, qualita' diversa. Si salva con la
 	// scena, cosi' una scena preparata per il render finale si riapre con la sua qualita'.
@@ -40,7 +49,7 @@ namespace Lucerna {
 		float DenoiseAPhi = 0.2f;    // sigma albedo (piccolo = blocca i bordi di materiale/tinta)
 
 		// ---- film
-		bool Tonemap = true;         // ACES; off = valori lineari clampati
+		ToneMapper ToneMap = ToneMapper::ACES; // None = valori lineari clampati
 		float Exposure = 1.0f;
 
 		// Preset: punti di partenza, non modalita'. Cambiare un campo dopo averne scelto uno
@@ -73,7 +82,16 @@ namespace Lucerna {
 			Field("denoise", &S::Denoise), Field("denoiseStrength", &S::DenoiseStrength), Field("denoiseAutoFade", &S::DenoiseAutoFade),
 			Field("denoiseCPhi", &S::DenoiseCPhi), Field("denoiseNPhi", &S::DenoiseNPhi),
 			Field("denoisePPhi", &S::DenoisePPhi), Field("denoiseAPhi", &S::DenoiseAPhi),
-			Field("tonemap", &S::Tonemap), Field("exposure", &S::Exposure));
+			// "tonemap" e' il vecchio bool (ACES o niente): si legge prima, poi "toneMapper" lo sostituisce
+			Custom<S>("tonemap", [](const S& s) { return s.ToneMap != ToneMapper::None; },
+				[](S& s, bool on) { if (!on) s.ToneMap = ToneMapper::None; }),
+			Custom<S>("toneMapper", [](const S& s) { return std::string(ToneMapperKeys[static_cast<int>(s.ToneMap)]); },
+				[](S& s, const std::string& key) {
+					for (int i = 0; i < static_cast<int>(std::size(ToneMapperKeys)); i++)
+						if (key == ToneMapperKeys[i])
+							s.ToneMap = static_cast<ToneMapper>(i);
+				}),
+			Field("exposure", &S::Exposure));
 	}
 
 	// Cosa si sta guardando: non cambia mai l'immagine calcolata e non si salva.

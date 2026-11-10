@@ -13,6 +13,8 @@
 #include "Core/Parallel.h"
 #include "Core/Profiler.h"
 #include "Core/AliasTable.h"
+#include "Core/Json.h"
+#include "Render/RenderSettings.h"
 
 #include <cstdio>
 #include <algorithm>
@@ -476,6 +478,20 @@ int main() {
 	for (const auto& m : oldAssets.Materials())
 		noMaps = noMaps && m.RoughnessTexture.IsNil() && m.MetallicTexture.IsNil() && m.EmissiveTexture.IsNil();
 	CHECK(noMaps);
+
+	// Tonemap: il vecchio bool "tonemap" si legge ancora (true = ACES, false = niente), e
+	// "toneMapper" lo sostituisce e torna uguale
+	auto readSettings = [](const char* text) { RenderSettings s; nlohmann::json::parse(text).get_to(s); return s; };
+	CHECK(readSettings(R"({"tonemap": true})").ToneMap == ToneMapper::ACES);
+	CHECK(readSettings(R"({"tonemap": false})").ToneMap == ToneMapper::None);
+	CHECK(readSettings(R"({"tonemap": true, "toneMapper": "agx"})").ToneMap == ToneMapper::AgX);
+	CHECK(readSettings(R"({"toneMapper": "bogus"})").ToneMap == ToneMapper::ACES);
+	for (int i = 0; i < static_cast<int>(std::size(ToneMapperKeys)); i++) {
+		RenderSettings saved;
+		saved.ToneMap = static_cast<ToneMapper>(i);
+		const nlohmann::json j = saved;
+		CHECK(j.get<RenderSettings>().ToneMap == saved.ToneMap);
+	}
 
 	std::printf(failures ? "%d checks failed\n" : "all checks passed\n", failures);
 	return failures ? 1 : 0;
