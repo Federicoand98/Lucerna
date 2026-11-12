@@ -20,6 +20,7 @@ namespace Lucerna {
 		constexpr const char* PROFILER = "Profiler";
 		constexpr const char* VIEWPORT = "Viewport";
 		constexpr double MIN_SPAN = 20.0; // lo zoom orizzontale non va sotto questi frame
+		constexpr float MINIMAP_H = 26.0f; // l'altezza della minimappa dello storico, prima della UI scale
 
 		ImU32 Col(const ImVec4& color) { return ImGui::GetColorU32(color); }
 
@@ -1031,7 +1032,7 @@ namespace Lucerna {
 		const float tablesW = 470.0f * s;
 		const float lines = ImGui::GetTextLineHeightWithSpacing();
 		if (ImGui::GetContentRegionAvail().x >= tablesW + 360.0f * s) {
-			const float plotH = std::clamp(ImGui::GetContentRegionAvail().y - 3.0f * lines - 30.0f * s, 60.0f * s, 280.0f * s);
+			const float plotH = std::clamp(ImGui::GetContentRegionAvail().y - 3.0f * lines - (30.0f + MINIMAP_H + 8.0f) * s, 60.0f * s, 280.0f * s);
 			if (ImGui::BeginTable("##profiler", 2, ImGuiTableFlags_SizingStretchProp)) {
 				ImGui::TableSetupColumn("graph", ImGuiTableColumnFlags_WidthStretch);
 				ImGui::TableSetupColumn("passes", ImGuiTableColumnFlags_WidthFixed, tablesW);
@@ -1299,8 +1300,48 @@ namespace Lucerna {
 			}
 		}
 
+		// ---- la minimappa: tutto lo storico, una colonna per pixel col suo frame piu' lungo, e il
+		// rettangolo della vista. Dal vivo il rettangolo sta sul bordo destro; con lo zoom al
+		// massimo copre tutto. Un clic o un trascinamento ci porta la vista.
+		{
+			const std::deque<FrameRecord>& history = Profiler::Get().History();
+			const float mapH = MINIMAP_H * s;
+			ImGui::SetCursorScreenPos(ImVec2(plotMin.x, plotMax.y + labelH + 10.0f * s));
+			const ImVec2 mapMin = ImGui::GetCursorScreenPos();
+			const ImVec2 mapMax(plotMax.x, mapMin.y + mapH);
+			ImGui::InvisibleButton("##minimap", ImVec2(mapMax.x - mapMin.x, mapH));
+			const double count = static_cast<double>(history.size());
+			const float mapW = std::max(mapMax.x - mapMin.x, 1.0f);
+			if (ImGui::IsItemActive() && count > 0.0) {
+				// il frame sotto il mouse va al centro della vista
+				const double at = std::clamp((io.MousePos.x - mapMin.x) / mapW, 0.0f, 1.0f) * count;
+				moveEnd(static_cast<double>(range.First) + at + shown * 0.5);
+			}
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("The whole history (%s): click or drag to move the view", FormatDuration(range.AgoMs + range.DurationMs).c_str());
+			list->AddRectFilled(mapMin, mapMax, Col(Theme::Field), 3.0f * s);
+			const int columns = static_cast<int>(mapW);
+			for (int c = 0; c < columns && count > 0.0; c++) {
+				const size_t i0 = static_cast<size_t>(c * count / mapW);
+				const size_t i1 = std::max(i0 + 1, static_cast<size_t>((c + 1) * count / mapW));
+				if (i0 >= history.size())
+					break;
+				float worst = 0.0f;
+				for (size_t i = i0; i < std::min(i1, history.size()); i++)
+					worst = std::max(worst, history[i].FrameMs);
+				const float h = std::min(worst / yMax, 1.0f) * (mapH - 4.0f * s);
+				list->AddRectFilled(ImVec2(mapMin.x + c, mapMax.y - 2.0f * s - h), ImVec2(mapMin.x + c + 1.0f, mapMax.y - 2.0f * s), Col(Theme::Rgb(0x6a6a72)));
+			}
+			if (count > 0.0) {
+				const float x0 = mapMin.x + static_cast<float>((range.Begin - range.First) / count * mapW);
+				const float x1 = std::max(x0 + 3.0f * s, mapMin.x + static_cast<float>((range.End - range.First) / count * mapW));
+				list->AddRectFilled(ImVec2(x0, mapMin.y), ImVec2(x1, mapMax.y), Col(Theme::Rgb(0xffb547, 0.18f)), 2.0f * s);
+				list->AddRect(ImVec2(x0, mapMin.y), ImVec2(x1, mapMax.y), Col(Theme::Accent), 2.0f * s, 0, 1.5f);
+			}
+		}
+
 		// la legenda
-		ImGui::SetCursorScreenPos(ImVec2(plotMin.x, plotMax.y + labelH + 14.0f * s));
+		ImGui::SetCursorScreenPos(ImVec2(plotMin.x, plotMax.y + labelH + (18.0f + MINIMAP_H) * s));
 		bool first = true;
 		for (const PassKey& key : stats.Keys) {
 			if (key.Depth != 0)
