@@ -61,6 +61,7 @@ layout(std140, binding = 8) uniform FrameParams {
     int numSpheres;       // quanti primitivi del BLAS procedurale sono sfere: i seguenti sono quad
     int numMaterials;
     int countRays;        // 1 = il profiler e' aperto: le ray query si contano (issue #36)
+    float sunPick;        // probabilita' con cui la NEE sceglie il Sole (ADR 0026)
 };
 
 layout(std430, binding = 9) restrict readonly buffer SpheresBuffer {

@@ -67,10 +67,12 @@ namespace Lucerna {
 		bool EnvironmentMapping() const { return m_EnvironmentMapping; }
 		const glm::vec4& SunDirection() const { return m_SunDirection; } // xyz verso il Sole, w = cos del raggio
 		const glm::vec4& SunRadiance() const { return m_SunRadiance; }   // rgb, w = angolo solido; zero se spento
+		float SunPick() const { return m_SunPick; } // la probabilita' con cui la NEE sceglie il Sole (ADR 0026)
 
 	private:
 		void BuildGeometry(const Scene& scene, const AssetLibrary& assets);
 		void BuildMeshInfos(const Scene& scene, const AssetLibrary& assets);
+		void PickByPower(std::vector<GPULight>& lights, const Scene& scene, const AssetLibrary& assets) const;
 		void BuildLights(const Scene& scene, const AssetLibrary& assets);
 		float MaterialIndexOf(const ObjectId& id) const; // -1 = nessun materiale
 		void Upload(GpuBuffer& buffer, const void* data, size_t bytes, MemoryCategory category = MemoryCategory::SceneBuffers);
@@ -113,6 +115,7 @@ namespace Lucerna {
 		glm::vec3 m_BackgroundColor{ 0.0f };
 		bool m_EnvironmentMapping = false;
 		glm::vec4 m_SunDirection{ 0.0f }, m_SunRadiance{ 0.0f };
+		float m_SunPick = 0.0f;
 	};
 }
 

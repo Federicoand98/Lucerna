@@ -495,6 +495,68 @@ namespace Lucerna {
 		Upload(m_Meshes, m_MeshInfos.data(), sizeof(MeshInfo) * m_MeshInfos.size());
 	}
 
+	// La NEE sceglie la voce in proporzione alla sua potenza (ADR 0026): la luminanza del flusso
+	// emesso, con la stessa alias table dei triangoli emissivi. Il Sole consegna alla scena la
+	// sua irradianza sul disco che la contiene; le mesh portano in world il totale delle loro
+	// aree locali con |det|^(2/3). Probabilita' e casella finiscono nella voce, cosi' NEE e MIS
+	// leggono lo stesso numero.
+	void RenderScene::PickByPower(std::vector<GPULight>& lights, const Scene& scene, const AssetLibrary& assets) const {
+		if (lights.empty())
+			return;
+		const glm::vec3 lum709(0.2126f, 0.7152f, 0.0722f);
+		constexpr float pi = 3.14159265f;
+
+		// la sfera che contiene la scena, solo se c'e' il Sole a chiederla
+		float sceneRadius = 0.0f;
+		if (std::any_of(lights.begin(), lights.end(), [](const GPULight& L) { return L.Meta.x == 2; })) {
+			AABB box;
+			for (const AABB& b : PrimitiveBounds(scene, assets)) {
+				box.expand(b.min);
+				box.expand(b.max);
+			}
+			for (const MeshInfo& info : m_MeshInfos)
+				if (info.NumTriangles > 0.0f) {
+					box.expand(glm::vec3(info.BoundsMin));
+					box.expand(glm::vec3(info.BoundsMax));
+				}
+			for (const PunctualLight& p : scene.PunctualLights())
+				box.expand(p.Position);
+			if (box.min.x <= box.max.x)
+				sceneRadius = 0.5f * glm::length(box.max - box.min);
+		}
+
+		std::vector<float> power(lights.size());
+		for (size_t i = 0; i < lights.size(); i++) {
+			const GPULight& L = lights[i];
+			const float lum = glm::dot(glm::vec3(L.Emission), lum709);
+			switch (L.Meta.x) {
+			case 0: power[i] = pi * L.Emission.a * lum; break;        // sfera, solo verso fuori
+			case 1: power[i] = 2.0f * pi * L.Emission.a * lum; break; // quad, due lati
+			case 2: power[i] = lum * L.Emission.a * pi * sceneRadius * sceneRadius; break; // Sole: E * pi r^2
+			case 3: power[i] = 4.0f * pi * lum; break;
+			case 4: power[i] = 2.0f * pi * lum * (1.0f - 0.5f * (L.V.x + L.U.w)); break;
+			case 5: {
+				// Emission.a e' il totale di area locale per luminanza: con |det|^(2/3) diventa world
+				const float det = std::abs(glm::determinant(glm::mat3(m_MeshInfos[L.Meta.z].Transform)));
+				power[i] = 2.0f * pi * L.Emission.a * std::pow(det, 2.0f / 3.0f);
+				break;
+			}
+			}
+		}
+		std::vector<AliasEntry> table = BuildAliasTable(power);
+		double total = 0.0;
+		for (float p : power)
+			total += std::max(p, 0.0f);
+		if (table.empty()) {
+			// nessuna potenza misurabile (un Sole in una scena vuota): si torna all'uniforme
+			std::fill(power.begin(), power.end(), 1.0f);
+			table = BuildAliasTable(power);
+			total = static_cast<double>(power.size());
+		}
+		for (size_t i = 0; i < lights.size(); i++)
+			lights[i].Pick = glm::vec4(static_cast<float>(std::max(power[i], 0.0f) / total), table[i].Prob, static_cast<float>(table[i].Alias), 0.0f);
+	}
+
 	void RenderScene::BuildLights(const Scene& scene, const AssetLibrary& assets) {
 		std::vector<GPULight> lights = CollectLights(scene, assets, m_MaterialIndex);
 
@@ -562,6 +624,7 @@ namespace Lucerna {
 			lights.push_back(L);
 		}
 		m_EmissiveDirty = false;
+		PickByPower(lights, scene, assets);
 		if (tablesGrew)
 			Upload(m_EmissiveBuffer, m_EmissiveSamples.data(), sizeof(GpuEmissiveSample) * m_EmissiveSamples.size());
 		Upload(m_Meshes, m_MeshInfos.data(), sizeof(MeshInfo) * m_MeshInfos.size());
@@ -573,6 +636,10 @@ namespace Lucerna {
 		Upload(m_Lights, lights.data(), sizeof(GPULight) * lights.size());
 
 		m_SunDirection = m_SunRadiance = glm::vec4(0.0f);
+		m_SunPick = 0.0f;
+		for (const GPULight& L : lights)
+			if (L.Meta.x == 2)
+				m_SunPick = L.Pick.x;
 		if (scene.Sun().Enabled) {
 			m_SunDirection = glm::vec4(scene.Sun().Direction(), scene.Sun().CosMax());
 			m_SunRadiance = glm::vec4(scene.Sun().Radiance(), scene.Sun().SolidAngle());

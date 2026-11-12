@@ -106,6 +106,7 @@ struct Light {
     vec4 V;         // quad: spigolo V ; sfera: inutilizzato
     vec4 Normal;    // quad: normale ; sfera: inutilizzato
     ivec4 Meta;     // x = tipo (0 sfera, 1 quad, 2 Sole, 3 punto, 4 spot, 5 mesh), y = objType, z = objIndex, w = mesh: inizio della alias table
+    vec4 Pick;      // ADR 0026: x = probabilita' di sceglierla, y/z = casella della alias table delle luci (Prob, Alias)
 };
 
 // Parametri del BSDF derivati dal materiale (nessun RNG): condivisi tra il sampling (BSDF)

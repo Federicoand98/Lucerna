@@ -56,13 +56,14 @@ vec3 WorldTriangle(int triangle, int mesh, out vec3 a, out vec3 b, out vec3 c) {
     return cross(b - a, c - a);
 }
 
-// pdf in solid angle, da p, di aver campionato il punto q del triangolo: la voce fra numLights,
-// il triangolo col suo peso fra quelli dell'istanza, il punto uniforme sull'area world
-float EmissiveTrianglePdf(int triangle, int mesh, float total, vec3 crossed, float dist2, float cosLgt) {
+// pdf in solid angle, da p, di aver campionato il punto q del triangolo: la voce con la sua
+// probabilita' (pick), il triangolo col suo peso fra quelli dell'istanza, il punto uniforme
+// sull'area world
+float EmissiveTrianglePdf(int triangle, int mesh, float pick, float total, vec3 crossed, float dist2, float cosLgt) {
     float areaWorld = 0.5 * length(crossed);
     if(cosLgt < 1e-6 || areaWorld < 1e-12 || total <= 0.0)
         return 0.0;
-    return (1.0 / float(numLights)) * (EmissiveWeight(triangle, mesh) / total) * dist2 / (cosLgt * areaWorld);
+    return pick * (EmissiveWeight(triangle, mesh) / total) * dist2 / (cosLgt * areaWorld);
 }
 
 // Il punto da raggiungere col raggio d'ombra: q staccato di 1 mm dall'emettitore lungo la sua
@@ -73,8 +74,8 @@ vec3 ShadowTarget(vec3 q, vec3 n, vec3 p) {
     return q + (dot(n, p - q) >= 0.0 ? n : -n) * 0.001;
 }
 
-// Campiona un emettitore (scelto uniformemente) e restituisce direzione, distanza, radianza
-// e pdf in solid angle (gia' comprensiva di 1/numLights). false = campione non valido.
+// Campiona un emettitore (scelto in proporzione alla potenza, ADR 0026) e restituisce direzione,
+// distanza, radianza e pdf in solid angle (gia' comprensiva della probabilita' della voce). false = campione non valido.
 // target = dove mira il raggio d'ombra (ShadowTarget; per il Sole un punto lontano lungo wi).
 // delta = luce punto o spot: nessun raggio BSDF la puo' colpire, quindi peso MIS 1. Per loro
 // Lrad e' gia' l'irradianza sul punto (I / d^2) e pdf la sola probabilita' di sceglierla.
@@ -83,19 +84,22 @@ bool SampleLight(vec3 p, out vec3 wi, out float dist, out vec3 Lrad, out float p
     if(numLights == 0)
         return false;
 
-    int li = min(int(GetRandomFloat() * float(numLights)), numLights - 1);
-    Light L = Lights[li];
+    // la alias table delle luci: una casella uniforme, poi lei o il suo alias
+    float u = GetRandomFloat() * float(numLights);
+    int k = min(int(u), numLights - 1);
+    vec4 cell = Lights[k].Pick;
+    Light L = Lights[(u - float(k)) < cell.y ? k : int(cell.z)];
     Lrad = L.Emission.rgb;
-    float pickPdf = 1.0 / float(numLights);
+    float pickPdf = L.Pick.x;
 
     if(L.Meta.x == 5) {
         // ---- istanza di mesh emissiva: un triangolo dalla alias table, un punto uniforme su di lui ----
         int mesh = L.Meta.z;
         int count = int(L.U.x);
-        float u = GetRandomFloat() * float(count);
-        int k = min(int(u), count - 1);
-        EmissiveSample entry = EmissiveSamples[L.Meta.w + k];
-        int tri = (u - float(k)) < entry.Prob ? entry.Triangle : entry.AliasTriangle;
+        float ut = GetRandomFloat() * float(count);
+        int kt = min(int(ut), count - 1);
+        EmissiveSample entry = EmissiveSamples[L.Meta.w + kt];
+        int tri = (ut - float(kt)) < entry.Prob ? entry.Triangle : entry.AliasTriangle;
 
         vec3 a, b, c;
         vec3 crossed = WorldTriangle(tri, mesh, a, b, c);
@@ -109,7 +113,7 @@ bool SampleLight(vec3 p, out vec3 wi, out float dist, out vec3 Lrad, out float p
         dist = sqrt(dist2);
         wi = dvec / dist;
         float cosLgt = abs(dot(normalize(crossed), wi)); // due lati, come l'emissione sull'hit
-        pdf = EmissiveTrianglePdf(tri, mesh, L.Emission.a, crossed, dist2, cosLgt);
+        pdf = EmissiveTrianglePdf(tri, mesh, pickPdf, L.Emission.a, crossed, dist2, cosLgt);
         if(pdf <= 0.0)
             return false;
         TriangleUV tuv = TriUVs[tri];
@@ -207,7 +211,7 @@ bool SampleLight(vec3 p, out vec3 wi, out float dist, out vec3 Lrad, out float p
     }
 }
 
-// pdf (solid angle, incl. 1/numLights) con cui il light sampling avrebbe generato la direzione
+// pdf (solid angle, incl. la probabilita' della voce) con cui il light sampling avrebbe generato la direzione
 // da fromPos verso l'emettitore effettivamente colpito da un raggio BSDF. Serve al termine MIS
 // sull'emissione. 0 se l'oggetto colpito non e' un emettitore campionabile.
 float LightPdfToward(vec3 fromPos, HitInfo hit) {
@@ -223,12 +227,12 @@ float LightPdfToward(vec3 fromPos, HitInfo hit) {
         vec3 dvec = hit.HitPosition - fromPos;
         float dist2 = dot(dvec, dvec);
         float cosLgt = abs(dot(normalize(crossed), normalize(dvec)));
-        return EmissiveTrianglePdf(hit.Triangle, hit.ObjectIndex, Lights[li].Emission.a, crossed, dist2, cosLgt);
+        return EmissiveTrianglePdf(hit.Triangle, hit.ObjectIndex, Lights[li].Pick.x, Lights[li].Emission.a, crossed, dist2, cosLgt);
     }
     for(int i = 0; i < numLights; i++) {
         if(Lights[i].Meta.y != hit.ObjectType || Lights[i].Meta.z != hit.ObjectIndex)
             continue;
-        float pickPdf = 1.0 / float(numLights);
+        float pickPdf = Lights[i].Pick.x;
         if(Lights[i].Meta.x == 0) {
             vec3 c = Lights[i].P.xyz; float r = Lights[i].P.w;
             float d2 = dot(c - fromPos, c - fromPos);

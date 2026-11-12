@@ -136,9 +136,10 @@ namespace Lucerna {
 		glm::vec4 V{ 0.0f };         // quad: vettore-spigolo V (fisico) ; sfera: inutilizzato
 		glm::vec4 Normal{ 0.0f };    // quad: normale.xyz ; sfera: inutilizzato
 		glm::ivec4 Meta{ 0 };        // x = tipo (0 sfera, 1 quad, 2 Sole, 3 punto, 4 spot, 5 mesh), y = objType, z = objIndex, w = mesh: inizio della sua alias table
+		glm::vec4 Pick{ 0.0f };      // la scelta per potenza (ADR 0026): x = probabilita' di questa voce, y/z = casella della alias table delle luci (Prob, Alias)
 	};
 
-	static_assert(sizeof(GPULight) == 96, "GPULight deve essere 96 byte per combaciare con lo std430");
+	static_assert(sizeof(GPULight) == 112, "GPULight deve essere 112 byte per combaciare con lo std430");
 	static_assert(sizeof(MeshInfo) == 224, "MeshInfo deve combaciare con lo std430 dello shader");
 }
 

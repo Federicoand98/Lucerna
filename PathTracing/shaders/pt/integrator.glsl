@@ -54,7 +54,7 @@ vec3 PerPixel(vec2 ndc) {
             if(sunRadiance.w > 0.0 && dot(ray.Direction, sunDirection.xyz) >= sunDirection.w) {
                 float w = 1.0;
                 if(!prevDelta && numLights > 0) {
-                    float pdfL = (1.0 / float(numLights)) / sunRadiance.w;
+                    float pdfL = sunPick / sunRadiance.w;
                     w = prevPdfBsdf / (prevPdfBsdf + pdfL);
                 }
                 light += sunRadiance.rgb * throughput * w;

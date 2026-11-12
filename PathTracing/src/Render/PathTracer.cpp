@@ -69,6 +69,7 @@ namespace Lucerna {
 		frame.BackgroundColor = scene.BackgroundColor();
 		frame.SunDirection = scene.SunDirection();
 		frame.SunRadiance = scene.SunRadiance();
+		frame.SunPick = scene.SunPick();
 		frame.RayDepth = static_cast<int>(container.RayDepth);
 		frame.PickPixel = container.PickPixel;
 		frame.AovView = container.AOVView;

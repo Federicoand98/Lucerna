@@ -34,7 +34,7 @@ namespace Lucerna {
 		int NumSpheres;
 		int NumMaterials;
 		int CountRays;
-		int Padding;
+		float SunPick; // la probabilita' con cui la NEE sceglie il Sole (ADR 0026)
 	};
 	static_assert(sizeof(FrameParams) == 336, "FrameParams deve combaciare con il layout std140 dello shader");
 
