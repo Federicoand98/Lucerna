@@ -1792,7 +1792,7 @@ namespace Lucerna {
 			if (ImGui::IsKeyPressed(ImGuiKey_G)) m_GizmoOperation = ImGuizmo::TRANSLATE;
 			if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoOperation = ImGuizmo::ROTATE;
 			if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoOperation = ImGuizmo::SCALE;
-			if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !(m_ProfilerFocused && Profiler::Get().Paused())) m_Selection = {};
+			if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !(m_ProfilerFocused && !m_ProfilerLive)) m_Selection = {};
 
 			if (ImGui::IsKeyPressed(ImGuiKey_Delete) && CanDeleteSelection())
 				m_DeleteRequested = true;

@@ -26,8 +26,8 @@ namespace Lucerna {
 	};
 
 	// Uno scope CPU (PROFILE_SCOPE), nell'ordine in cui si apre: la profondita' dice chi e' dentro chi.
+	// Niente nome: lo storico ne tiene decine di migliaia, e il nome sta nel profiler (ScopeName).
 	struct CpuTiming {
-		std::string Name;
 		int Depth = 0;
 		float Ms = 0.0f;
 		uint32_t Id = 0; // il percorso dalla radice ("Renderer/RenderScene.Sync"), come numero: Profiler::ScopePath
@@ -97,7 +97,10 @@ namespace Lucerna {
 
 	class Profiler {
 	public:
-		static constexpr size_t Capacity = 1000;
+		// Lo storico tiene gli ultimi dieci minuti, ma non piu' di MaxFrames giri: a 60 Hz sono
+		// 36000 frame, senza vsync il tetto (circa 60 MB nel caso peggiore) arriva prima.
+		static constexpr double HistoryMs = 10.0 * 60.0 * 1000.0;
+		static constexpr size_t MaxFrames = 100000;
 
 		static Profiler& Get();
 
@@ -135,13 +138,15 @@ namespace Lucerna {
 		// lo storico indicizza per id invece di confrontare stringhe a ogni frame.
 		size_t ScopeCount() const { return m_ScopePaths.size(); }
 		const std::string& ScopePath(uint32_t id) const { return m_ScopePaths[id]; }
+		const std::string& ScopeName(uint32_t id) const { return m_ScopeNames[id]; } // l'ultimo pezzo del percorso
 		int ScopeParent(uint32_t id) const { return m_ScopeParents[id]; } // -1 = scope di primo livello
 
-		// I giri completi, dal piu' vecchio. In pausa non cresce, ma Latest si aggiorna.
+		// I giri completi, dal piu' vecchio. Si registra sempre: la pausa del pannello ferma la vista, non lo storico.
 		const std::deque<FrameRecord>& History() const { return m_History; }
+		// Il numero del giro History()[0], contando dall'avvio: un numero resta dello stesso giro
+		// anche quando i piu' vecchi escono dallo storico
+		uint64_t FirstFrame() const { return m_Completed - m_History.size(); }
 		const FrameRecord& Latest() const { return m_Latest; }
-		void SetPaused(bool paused) { m_Paused = paused; }
-		bool Paused() const { return m_Paused; }
 		void Reset(); // per i controlli: si riparte da zero
 
 		static double NowMs();
@@ -158,15 +163,16 @@ namespace Lucerna {
 
 		std::thread::id m_MainThread = std::this_thread::get_id();
 		std::vector<OpenScope> m_OpenScopes;
-		std::vector<std::string> m_ScopePaths;
+		std::vector<std::string> m_ScopePaths, m_ScopeNames;
 		std::vector<int> m_ScopeParents;
 		std::unordered_map<std::string, uint32_t> m_ScopeIds;
 		std::deque<FrameRecord> m_History;
+		double m_HistorySpanMs = 0.0; // la somma dei FrameMs nello storico
+		uint64_t m_Completed = 0;     // i giri entrati nello storico dall'avvio
 		FrameRecord m_Latest;
 		FrameRecord m_Current, m_Pending;
 		double m_CurrentStart = 0.0;
 		bool m_HasCurrent = false, m_HasPending = false;
-		bool m_Paused = false;
 
 		LoadCapture m_Load, m_LastLoad;
 		double m_LoadStart = 0.0;

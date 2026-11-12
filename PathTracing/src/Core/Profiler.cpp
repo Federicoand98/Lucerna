@@ -160,10 +160,11 @@ namespace Lucerna {
 		std::string path = parent < 0 ? std::string(name) : m_ScopePaths[parent] + "/" + std::string(name);
 		auto [found, added] = m_ScopeIds.try_emplace(path, static_cast<uint32_t>(m_ScopePaths.size()));
 		if (added) {
+			m_ScopeNames.emplace_back(name);
 			m_ScopePaths.push_back(std::move(path));
 			m_ScopeParents.push_back(parent);
 		}
-		current.Cpu.push_back({ std::string(name), static_cast<int>(m_OpenScopes.size()), 0.0f, found->second });
+		current.Cpu.push_back({ static_cast<int>(m_OpenScopes.size()), 0.0f, found->second });
 		const double now = NowMs();
 		size_t loadIndex = SIZE_MAX;
 		if (m_Loading) {
@@ -221,7 +222,7 @@ namespace Lucerna {
 	void Profiler::AttachRays(uint32_t rays, uint32_t pixels) {
 		m_Latest.Rays = rays;
 		m_Latest.Pixels = pixels;
-		if (!m_Paused && !m_History.empty()) {
+		if (!m_History.empty()) {
 			m_History.back().Rays = rays;
 			m_History.back().Pixels = pixels;
 		}
@@ -229,11 +230,16 @@ namespace Lucerna {
 
 	void Profiler::Complete(FrameRecord record) {
 		m_Latest = record;
-		if (m_Paused)
-			return;
+		// i vettori crescono a raddoppi: nello storico si tiene solo quello che serve
+		record.Cpu.shrink_to_fit();
+		record.Gpu.shrink_to_fit();
+		m_HistorySpanMs += record.FrameMs;
 		m_History.push_back(std::move(record));
-		if (m_History.size() > Capacity)
+		m_Completed++;
+		while (m_History.size() > 1 && (m_History.size() > MaxFrames || m_HistorySpanMs > HistoryMs)) {
+			m_HistorySpanMs -= m_History.front().FrameMs;
 			m_History.pop_front();
+		}
 	}
 
 	void Profiler::BeginLoad(std::string label) {

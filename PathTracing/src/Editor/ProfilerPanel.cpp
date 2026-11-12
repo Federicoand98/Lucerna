@@ -19,7 +19,7 @@ namespace Lucerna {
 	namespace {
 		constexpr const char* PROFILER = "Profiler";
 		constexpr const char* VIEWPORT = "Viewport";
-		constexpr int WINDOWS[] = { 120, 300, 1000 }; // le lunghezze dello storico tra cui scegliere
+		constexpr double MIN_SPAN = 20.0; // lo zoom orizzontale non va sotto questi frame
 
 		ImU32 Col(const ImVec4& color) { return ImGui::GetColorU32(color); }
 
@@ -121,7 +121,7 @@ namespace Lucerna {
 						for (auto r = scopes.begin(); r != scopes.end(); ++r)
 							if (descends(r->Id, parent))
 								at = r + 1;
-					scopes.insert(at, { scope.Name, scope.Depth + 1, static_cast<int>(scope.Id), profiler.ScopePath(scope.Id) });
+					scopes.insert(at, { profiler.ScopeName(scope.Id), scope.Depth + 1, static_cast<int>(scope.Id), profiler.ScopePath(scope.Id) });
 				}
 			std::vector<CpuRow> rows = { { "Frame", 0, RowFrame, "#frame" }, { "Fence wait", 1, RowFence, "#fence" }, { "Acquire image", 1, RowAcquire, "#acquire" } };
 			rows.insert(rows.end(), scopes.begin(), scopes.end());
@@ -149,7 +149,9 @@ namespace Lucerna {
 				series[fixed[-RowPresent]][f] = frame.PresentMs;
 				float tracked = frame.WaitMs();
 				for (const CpuTiming& scope : frame.Cpu) {
-					series[rowOfScope[scope.Id]][f] += scope.Ms;
+					// un frame fissato fuori dal range puo' avere scope che le righe non conoscono
+					if (rowOfScope[scope.Id] >= 0)
+						series[rowOfScope[scope.Id]][f] += scope.Ms;
 					if (scope.Depth == 0)
 						tracked += scope.Ms;
 				}
@@ -211,6 +213,8 @@ namespace Lucerna {
 			size_t Frames = 0;
 			Diagnosis Diag;
 			std::vector<StatRow> Gpu, Cpu;
+			std::vector<PassKey> Keys; // le passate di Gpu, nello stesso ordine
+			std::vector<CpuRow> Rows;  // le righe di Cpu, nello stesso ordine
 			double Rays = 0.0, Pixels = 0.0, PathTracerMs = 0.0;
 			size_t CountedFrames = 0;
 			bool HasThroughput() const { return CountedFrames > 0 && PathTracerMs > 0.0; }
@@ -223,16 +227,17 @@ namespace Lucerna {
 			ProfileStats stats;
 			stats.Frames = frames.size();
 			stats.Diag = Diagnose(frames);
-			for (const PassKey& key : PassKeys(frames)) {
+			stats.Keys = PassKeys(frames);
+			for (const PassKey& key : stats.Keys) {
 				std::vector<float> values;
 				for (const FrameRecord* f : frames)
 					values.push_back(PassMs(*f, key));
-				stats.Gpu.push_back({ GpuKey(key), key.Name, key.Depth, Summarize(values) });
+				stats.Gpu.push_back({ GpuKey(key), key.Name, key.Depth, Summarize(std::move(values)) });
 			}
-			const std::vector<CpuRow> rows = CpuRows(frames);
-			const std::vector<std::vector<float>> series = CpuSeries(rows, frames);
-			for (size_t r = 0; r < rows.size(); r++)
-				stats.Cpu.push_back({ CpuKey(rows[r]), rows[r].Name, rows[r].Depth, Summarize(series[r]) });
+			stats.Rows = CpuRows(frames);
+			std::vector<std::vector<float>> series = CpuSeries(stats.Rows, frames);
+			for (size_t r = 0; r < stats.Rows.size(); r++)
+				stats.Cpu.push_back({ CpuKey(stats.Rows[r]), stats.Rows[r].Name, stats.Rows[r].Depth, Summarize(std::move(series[r])) });
 			for (const FrameRecord* f : frames)
 				if (f->Rays > 0) {
 					stats.Rays += f->Rays;
@@ -257,6 +262,14 @@ namespace Lucerna {
 			ImGui::TextColored(color, "%s", text);
 		}
 
+		std::string FormatDuration(double ms) {
+			char text[32];
+			if (ms >= 60000.0) snprintf(text, sizeof(text), "%.1f min", ms / 60000.0);
+			else if (ms >= 1000.0) snprintf(text, sizeof(text), "%.1f s", ms / 1000.0);
+			else snprintf(text, sizeof(text), "%.0f ms", ms);
+			return text;
+		}
+
 		const char* LimitName(Bottleneck limit) {
 			switch (limit) {
 			case Bottleneck::Gpu: return "gpu";
@@ -267,12 +280,32 @@ namespace Lucerna {
 		}
 	}
 
+	// Il range visibile del grafico in numeri di giro: lo storico e' [First, Last), la vista
+	// [Begin, End). Pinned e' il frame fissato, anche fuori dalla vista.
+	struct ProfilerRange {
+		uint64_t First = 0, Last = 0, Begin = 0, End = 0;
+		size_t Slots = 0; // i posti del grafico: piu' dei frame quando lo storico e' ancora corto
+		std::vector<const FrameRecord*> Frames;
+		const FrameRecord* Pinned = nullptr;
+		double DurationMs = 0.0, AgoMs = 0.0; // quanto dura la vista, e quanto prima di adesso finisce
+	};
+
+	// Le statistiche del range visibile. Calcolarle su decine di migliaia di frame costa
+	// millisecondi: si rifanno subito dopo uno zoom o un preset, e quando la vista scorre (il live,
+	// un trascinamento) al massimo 4 volte al secondo e mai piu' spesso di 50 volte il loro costo,
+	// cosi' non prendono piu' del 2% del frame (ADR 0023).
+	struct ProfilerViewStats {
+		uint64_t Begin = 0, End = 0;
+		double ComputedAt = -1e9, CostMs = 0.0;
+		ProfileStats Stats;
+	};
+
 	void Application::SaveProfilerReference(bool save) {
 		m_ProfilerReference.clear();
 		m_ProfilerReferenceFrameMs = 0.0f;
 		if (!save)
 			return;
-		const ProfileStats stats = ComputeStats(LastFrames(WINDOWS[m_ProfilerWindow]));
+		const ProfileStats stats = m_ProfilerStats ? m_ProfilerStats->Stats : ComputeStats(LastFrames(600));
 		for (const StatRow& row : stats.Gpu)
 			m_ProfilerReference[row.Key] = row.Sum.Avg;
 		for (const StatRow& row : stats.Cpu)
@@ -282,7 +315,7 @@ namespace Lucerna {
 
 	// Il riepilogo da incollare in una issue o in chat: diagnosi, tempi, memoria, ultimo caricamento
 	std::string Application::ProfilerSummaryText() const {
-		const ProfileStats stats = ComputeStats(LastFrames(WINDOWS[m_ProfilerWindow]));
+		const ProfileStats stats = m_ProfilerStats ? m_ProfilerStats->Stats : ComputeStats(LastFrames(600));
 		std::string out;
 		char line[256];
 		auto add = [&](const char* format, auto... args) {
@@ -745,6 +778,7 @@ namespace Lucerna {
 		ImGui::PopStyleColor(2);
 	}
 
+
 	void Application::DrawProfilerPanel() {
 		const float s = UI::Scale();
 		if (!m_ProfilerDockChecked)
@@ -760,16 +794,48 @@ namespace Lucerna {
 			m_FocusProfiler = false;
 		}
 
-		Profiler& profiler = Profiler::Get();
-		const int window = WINDOWS[m_ProfilerWindow];
-		const std::vector<const FrameRecord*> frames = LastFrames(window);
-		if (m_ProfilerPinned >= static_cast<int>(frames.size()))
-			m_ProfilerPinned = -1;
-		auto resume = [&] { profiler.SetPaused(false); m_ProfilerPinned = -1; };
-		if (profiler.Paused() && m_ProfilerFocused && ImGui::IsKeyPressed(ImGuiKey_Escape))
-			resume();
+		// ---- il range visibile: live finisce all'ultimo giro, se no a m_ProfilerEnd
+		const Profiler& profiler = Profiler::Get();
+		const std::deque<FrameRecord>& history = profiler.History();
+		ProfilerRange range;
+		range.First = profiler.FirstFrame();
+		range.Last = range.First + history.size();
+		// lo span chiesto resta anche se lo storico e' ancora piu' corto: si riempie mentre cresce
+		m_ProfilerSpan = std::clamp(m_ProfilerSpan, MIN_SPAN, static_cast<double>(Profiler::MaxFrames));
+		const uint64_t span = std::min(static_cast<uint64_t>(std::llround(m_ProfilerSpan)), history.size());
+		if (m_ProfilerLive)
+			range.End = range.Last;
+		else {
+			// la vista resta sugli stessi giri mentre lo storico cresce; se escono, si ferma sul piu' vecchio
+			m_ProfilerEnd = std::clamp(m_ProfilerEnd, static_cast<double>(range.First + span), static_cast<double>(range.Last));
+			range.End = static_cast<uint64_t>(m_ProfilerEnd);
+		}
+		range.Begin = range.End - span;
+		// finche' lo storico e' piu' corto dello span, i posti vuoti stanno a sinistra; "tutto lo
+		// storico" (lo span al tetto) e' invece cio' che c'e'
+		const bool all = m_ProfilerSpan >= static_cast<double>(Profiler::MaxFrames);
+		range.Slots = all ? span : std::max<size_t>(span, static_cast<size_t>(std::llround(m_ProfilerSpan)));
+		range.Frames.reserve(span);
+		for (uint64_t i = range.Begin; i < range.End; i++) {
+			range.Frames.push_back(&history[i - range.First]);
+			range.DurationMs += history[i - range.First].FrameMs;
+		}
+		for (uint64_t i = range.End; i < range.Last; i++)
+			range.AgoMs += history[i - range.First].FrameMs;
+		if (m_ProfilerPinned >= 0 && static_cast<uint64_t>(m_ProfilerPinned) < range.First)
+			m_ProfilerPinned = -1; // uscito dallo storico
+		if (m_ProfilerPinned >= 0)
+			range.Pinned = &history[m_ProfilerPinned - range.First];
 
-		// ---- toolbar: le tab, e per Frame la pausa e la finestra
+		auto goLive = [&] {
+			m_ProfilerLive = true;
+			m_ProfilerPinned = -1;
+			m_ProfilerStatsDirty = true;
+		};
+		if (!m_ProfilerLive && m_ProfilerFocused && ImGui::IsKeyPressed(ImGuiKey_Escape))
+			goLive();
+
+		// ---- toolbar: le tab, e per Frame la vista
 		if (UI::Pill("Frame", m_ProfilerTab == 0))
 			m_ProfilerTab = 0;
 		ImGui::SameLine(0.0f, 2.0f * s);
@@ -787,22 +853,28 @@ namespace Lucerna {
 			ImGui::End();
 			return;
 		}
-		if (profiler.Paused()) {
+		if (!m_ProfilerLive) {
 			ImGui::SameLine();
 			ImGui::AlignTextToFramePadding();
-			if (m_ProfilerPinned >= 0)
-				ImGui::TextColored(Theme::SelectedText, ICON_PAUSE " Paused \xc2\xb7 frame %d pinned", m_ProfilerPinned - static_cast<int>(frames.size()) + 1);
+			const std::string ago = FormatDuration(range.AgoMs);
+			if (range.Pinned)
+				ImGui::TextColored(Theme::SelectedText, ICON_PAUSE " Paused \xc2\xb7 frame %lld pinned", static_cast<long long>(m_ProfilerPinned) - static_cast<long long>(range.Last) + 1);
 			else
-				ImGui::TextColored(Theme::SelectedText, ICON_PAUSE " Paused");
+				ImGui::TextColored(Theme::SelectedText, ICON_PAUSE " Paused \xc2\xb7 %s ago", ago.c_str());
 		}
 		const bool hasReference = m_ProfilerReferenceFrameMs > 0.0f;
 		const char* copyLabel = ICON_RESTORE " Copy summary";
 		const char* referenceLabel = hasReference ? "Clear reference" : "Save reference";
-		const char* pauseLabel = profiler.Paused() ? ICON_PLAY " Resume" : ICON_PAUSE " Pause";
-		const float comboW = 120.0f * s;
+		const char* liveLabel = m_ProfilerLive ? ICON_PAUSE " Pause" : ICON_PLAY " Live";
+		const float comboW = 170.0f * s;
 		auto pillW = [](const char* label) { return ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2; };
 		const float spacing = ImGui::GetStyle().ItemSpacing.x;
-		ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - comboW - pillW(pauseLabel) - pillW(referenceLabel) - pillW(copyLabel) - 3 * spacing);
+		// i controlli a destra; se non ci stanno accanto alle tab, vanno sulla riga sotto
+		const float rightX = ImGui::GetWindowContentRegionMax().x - comboW - pillW(liveLabel) - pillW(referenceLabel) - pillW(copyLabel) - 3 * spacing;
+		ImGui::SameLine();
+		if (ImGui::GetCursorPosX() > rightX)
+			ImGui::NewLine();
+		ImGui::SetCursorPosX(std::max(rightX, ImGui::GetCursorPosX()));
 		if (UI::Pill(copyLabel))
 			ImGui::SetClipboardText(ProfilerSummaryText().c_str());
 		if (ImGui::IsItemHovered())
@@ -811,28 +883,70 @@ namespace Lucerna {
 		if (UI::Pill(referenceLabel, hasReference))
 			SaveProfilerReference(!hasReference);
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip(hasReference ? "Remove the comparison column" : "Keep the current averages and compare everything against them");
+			ImGui::SetTooltip(hasReference ? "Remove the comparison column" : "Keep the visible averages and compare everything against them");
 		ImGui::SameLine();
-		if (UI::Pill(pauseLabel, profiler.Paused())) {
-			if (profiler.Paused())
-				resume();
+		if (UI::Pill(liveLabel, !m_ProfilerLive)) {
+			if (m_ProfilerLive) {
+				m_ProfilerLive = false;
+				m_ProfilerEnd = static_cast<double>(range.End);
+			}
 			else
-				profiler.SetPaused(true);
+				goLive();
 		}
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip(m_ProfilerLive ? "Stop following the present: recording goes on" : "Follow the present again (Esc)");
 		ImGui::SameLine();
+		// i preset dello zoom, in tempo: contano all'indietro dalla fine della vista
 		ImGui::SetNextItemWidth(comboW);
-		ImGui::Combo("##window", &m_ProfilerWindow, "120 frames\0" "300 frames\0" "1000 frames\0");
+		char preview[64];
+		snprintf(preview, sizeof(preview), "%s \xc2\xb7 %zu frames", FormatDuration(range.DurationMs).c_str(), range.Frames.size());
+		if (ImGui::BeginCombo("##span", preview)) {
+			const double presets[] = { 2000.0, 10000.0, 60000.0, 0.0 };
+			const char* names[] = { "2 s", "10 s", "1 min", "All history" };
+			for (int i = 0; i < 4; i++)
+				if (ImGui::Selectable(names[i])) {
+					double frames = static_cast<double>(Profiler::MaxFrames), ms = 0.0;
+					if (presets[i] > 0.0)
+						for (uint64_t f = range.End; f > range.First; f--) {
+							ms += history[f - 1 - range.First].FrameMs;
+							if (ms >= presets[i]) {
+								frames = static_cast<double>(range.End - f + 1);
+								break;
+							}
+						}
+					m_ProfilerSpan = std::max(frames, MIN_SPAN);
+					m_ProfilerStatsDirty = true;
+				}
+			ImGui::EndCombo();
+		}
 		ImGui::Separator();
 
-		if (frames.empty()) {
+		if (range.Frames.empty()) {
 			ImGui::TextDisabled("Collecting frames...");
 			ImGui::End();
 			return;
 		}
 
-		std::optional<CpuScope> diagnosisScope(std::in_place, "Diagnosis");
-		const Diagnosis diagnosis = Diagnose(frames);
-		diagnosisScope.reset();
+		// ---- le statistiche del range, dalla cache se non serve rifarle
+		if (!m_ProfilerStats)
+			m_ProfilerStats = std::make_shared<ProfilerViewStats>();
+		{
+			ProfilerViewStats& cache = *m_ProfilerStats;
+			const double now = Profiler::NowMs();
+			const bool changed = cache.Begin != range.Begin || cache.End != range.End;
+			const bool due = now - cache.ComputedAt >= std::max(250.0, 50.0 * cache.CostMs);
+			if (m_ProfilerStatsDirty || (changed && due)) {
+				PROFILE_SCOPE("Profiler stats");
+				cache.Stats = ComputeStats(range.Frames);
+				cache.Begin = range.Begin;
+				cache.End = range.End;
+				cache.ComputedAt = Profiler::NowMs();
+				cache.CostMs = cache.ComputedAt - now;
+				m_ProfilerStatsDirty = false;
+			}
+		}
+		const ProfileStats& stats = m_ProfilerStats->Stats;
+		const Diagnosis& diagnosis = stats.Diag;
 		ImDrawList* list = ImGui::GetWindowDrawList();
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f * s));
 
@@ -859,7 +973,7 @@ namespace Lucerna {
 			// a destra: la durata del frame
 			char frameText[48], fpsText[48];
 			snprintf(frameText, sizeof(frameText), "%.2f ms", diagnosis.FrameMs);
-			snprintf(fpsText, sizeof(fpsText), "%.0f fps \xc2\xb7 avg of %zu", 1000.0f / diagnosis.FrameMs, frames.size());
+			snprintf(fpsText, sizeof(fpsText), "%.0f fps \xc2\xb7 avg of %zu", 1000.0f / diagnosis.FrameMs, stats.Frames);
 			ImGui::PushFont(UI::MonoFont());
 			const float rightW = std::max(ImGui::CalcTextSize(frameText).x, ImGui::CalcTextSize(fpsText).x);
 			const float rightX = p.x + w - 14.0f * s - rightW;
@@ -870,7 +984,7 @@ namespace Lucerna {
 			// in mezzo: il frame diviso in lavoro della CPU, attesa della GPU e attesa del display
 			const float barX0 = labelEnd + 28.0f * s, barX1 = rightX - 24.0f * s;
 			if (barX1 - barX0 > 120.0f * s) {
-				const float total = std::max(diagnosis.CpuMs + diagnosis.GpuWaitMs + diagnosis.PresentWaitMs, 1e-3f);
+				const float sum = std::max(diagnosis.CpuMs + diagnosis.GpuWaitMs + diagnosis.PresentWaitMs, 1e-3f);
 				const float parts[3] = { diagnosis.CpuMs, diagnosis.GpuWaitMs, diagnosis.PresentWaitMs };
 				const ImVec4 colors[3] = { CPU_WORK, WAIT_GPU, WAIT_PRESENT };
 				const char* longNames[3] = { "CPU work", "Waiting for GPU", "Waiting for present" };
@@ -894,7 +1008,7 @@ namespace Lucerna {
 				list->AddRectFilled(ImVec2(barX0, barY), ImVec2(barX1, barY + 10.0f * s), Col(Theme::Field), 2.0f * s);
 				float x = barX0;
 				for (int i = 0; i < 3; i++) {
-					const float x1 = x + (barX1 - barX0) * parts[i] / total;
+					const float x1 = x + (barX1 - barX0) * parts[i] / sum;
 					list->AddRectFilled(ImVec2(x, barY), ImVec2(x1, barY + 10.0f * s), Col(colors[i]));
 					x = x1;
 				}
@@ -913,372 +1027,498 @@ namespace Lucerna {
 			ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 10.0f * s));
 		}
 
-		// Dopo la toolbar: Resume ed Esc tolgono il frame fissato in questo stesso frame
-		const bool pinned = m_ProfilerPinned >= 0;
-		const std::vector<PassKey> keys = PassKeys(frames);
-		const FrameRecord* pinnedFrame = pinned ? frames[m_ProfilerPinned] : nullptr;
-
-		if (ImGui::BeginTable("##profiler", 2, ImGuiTableFlags_SizingStretchProp)) {
-			ImGui::TableSetupColumn("graph", ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("passes", ImGuiTableColumnFlags_WidthFixed, 470.0f * s);
-			ImGui::TableNextRow();
-
-			// ---- il grafico: una barra per frame, le passate GPU impilate dentro il frame della CPU
-			ImGui::TableSetColumnIndex(0);
-			{
-				PROFILE_SCOPE("Graph");
-				ImGui::PushFont(UI::BoldFont());
-				ImGui::TextUnformatted("Frame time");
-				ImGui::PopFont();
-				ImGui::SameLine();
-				ImGui::TextDisabled("hover to inspect, click to pin");
-
-				// il grafico prende l'altezza che c'e', tolta la legenda sotto
-				const float avail = ImGui::GetContentRegionAvail().x;
-				// il grafico prende l'altezza che c'e', tolta la legenda sotto
-				const float legendH = ImGui::GetTextLineHeightWithSpacing() + 12.0f * s;
-				const float axisW = 34.0f * s;
-				const float plotH = std::clamp(ImGui::GetContentRegionAvail().y - legendH - 16.0f * s, 60.0f * s, 280.0f * s);
-				const ImVec2 origin = ImGui::GetCursorScreenPos();
-				const ImVec2 plotMin(origin.x + axisW, origin.y + 8.0f * s);
-				const ImVec2 plotMax(origin.x + avail - 2.0f * s, plotMin.y + plotH);
-				ImGui::InvisibleButton("##graph", ImVec2(avail, plotH + 16.0f * s));
-				const bool hovered = ImGui::IsItemHovered();
-				const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
-
-				std::vector<float> frameMs;
-				for (const FrameRecord* f : frames)
-					frameMs.push_back(f->FrameMs);
-				const float refresh = DisplayRefreshHz();
-				// il p99 e non il massimo: il primo frame dopo un caricamento dura secondi. Le linee
-				// di 60 Hz e del display compaiono quando i frame ci arrivano vicino.
-				const float yMax = std::max(2.0f, Summarize(frameMs).P99 * 1.25f);
-				auto yOf = [&](float ms) { return plotMax.y - std::min(ms, yMax) / yMax * plotH; };
-
-				ImGui::PushFont(UI::MonoFont());
-				const float step = NiceStep(yMax);
-				for (float v = 0.0f; v <= yMax + 1e-3f; v += step) {
-					const float y = yOf(v);
-					list->AddLine(ImVec2(plotMin.x, y), ImVec2(plotMax.x, y), Col(Theme::Header));
-					char tick[16];
-					snprintf(tick, sizeof(tick), "%g", v);
-					const ImVec2 size = ImGui::CalcTextSize(tick);
-					list->AddText(ImVec2(plotMin.x - 6.0f * s - size.x, y - size.y * 0.5f), Col(Theme::TextDim), tick);
-				}
-
-				const float barW = (plotMax.x - plotMin.x) / static_cast<float>(window);
-				const int firstSlot = window - static_cast<int>(frames.size());
-				const float gap = barW >= 3.0f ? 1.0f : 0.0f;
-				int hoveredIndex = -1;
-				if (hovered) {
-					const int slot = static_cast<int>((ImGui::GetIO().MousePos.x - plotMin.x) / barW);
-					if (slot >= firstSlot && slot < window)
-						hoveredIndex = slot - firstSlot;
-				}
-				for (size_t i = 0; i < frames.size(); i++) {
-					const FrameRecord& f = *frames[i];
-					const float x0 = plotMin.x + (firstSlot + static_cast<float>(i)) * barW;
-					const float x1 = std::max(x0 + 1.0f, x0 + barW - gap);
-					list->AddRectFilled(ImVec2(x0, yOf(f.FrameMs)), ImVec2(x1, plotMax.y), Col(GHOST));
-					float bottom = plotMax.y;
-					float stacked = 0.0f;
-					for (const GpuTiming& timing : f.Gpu) {
-						if (timing.Depth != 0)
-							continue;
-						stacked += timing.Ms;
-						const float top = yOf(stacked);
-						list->AddRectFilled(ImVec2(x0, top), ImVec2(x1, bottom), PassColor(timing.Name));
-						bottom = top;
-					}
-					if (static_cast<int>(i) == hoveredIndex)
-						list->AddRectFilled(ImVec2(x0, plotMin.y), ImVec2(x1, plotMax.y), Col(Theme::Rgb(0xffffff, 0.10f)));
-					if (static_cast<int>(i) == m_ProfilerPinned)
-						list->AddRect(ImVec2(x0 - 1.0f, plotMin.y), ImVec2(x1 + 1.0f, plotMax.y), Col(Theme::SelectedText));
-				}
-				list->AddLine(ImVec2(plotMin.x, plotMax.y), ImVec2(plotMax.x, plotMax.y), Col(Theme::Border));
-
-				// i riferimenti: 60 Hz e il refresh del display, se e' diverso
-				auto refLine = [&](float ms, const char* text, ImU32 color) {
-					if (ms > yMax)
-						return;
-					const float y = yOf(ms);
-					list->AddLine(ImVec2(plotMin.x, y), ImVec2(plotMax.x, y), color);
-					const ImVec2 size = ImGui::CalcTextSize(text);
-					const ImVec2 at(plotMax.x - size.x - 8.0f * s, y - size.y - 2.0f * s);
-					list->AddRectFilled(ImVec2(at.x - 4.0f * s, at.y), ImVec2(at.x + size.x + 4.0f * s, at.y + size.y), Col(Theme::Panel));
-					list->AddText(at, color, text);
-				};
-				char refText[64];
-				if (std::abs(refresh - 60.0f) > 0.5f) {
-					refLine(1000.0f / 60.0f, "60 Hz \xc2\xb7 16.7 ms", Col(Theme::TextDim));
-					snprintf(refText, sizeof(refText), "display %.0f Hz \xc2\xb7 %.1f ms", refresh, 1000.0f / refresh);
-				}
-				else
-					snprintf(refText, sizeof(refText), "display 60 Hz \xc2\xb7 16.7 ms");
-				refLine(1000.0f / refresh, refText, Col(Theme::Accent));
-				if (m_ProfilerReferenceFrameMs > 0.0f && m_ProfilerReferenceFrameMs <= yMax) {
-					const float y = yOf(m_ProfilerReferenceFrameMs);
-					for (float x = plotMin.x; x < plotMax.x; x += 8.0f * s)
-						list->AddLine(ImVec2(x, y), ImVec2(std::min(x + 4.0f * s, plotMax.x), y), Col(Theme::IconSky), 1.5f);
-					char text[48];
-					snprintf(text, sizeof(text), "reference \xc2\xb7 %.2f ms", m_ProfilerReferenceFrameMs);
-					list->AddText(ImVec2(plotMin.x + 6.0f * s, y - ImGui::GetTextLineHeight() - 2.0f * s), Col(Theme::IconSky), text);
-				}
-				ImGui::PopFont();
-
-				if (hoveredIndex >= 0) {
-					const FrameRecord& f = *frames[hoveredIndex];
-					ImGui::BeginTooltip();
-					ImGui::PushFont(UI::BoldFont());
-					ImGui::Text("Frame %d", hoveredIndex - static_cast<int>(frames.size()) + 1);
-					ImGui::PopFont();
-					ImGui::SameLine(160.0f * s);
-					ImGui::PushFont(UI::MonoFont());
-					ImGui::Text("%.2f ms", f.FrameMs);
-					ImGui::PopFont();
-					auto row = [&](ImU32 color, const char* name, float ms) {
-						Swatch(color);
-						ImGui::TextColored(Theme::TextDim, "%s", name);
-						ImGui::SameLine(160.0f * s);
-						ImGui::PushFont(UI::MonoFont());
-						ImGui::Text("%.2f", ms);
-						ImGui::PopFont();
-					};
-					for (const GpuTiming& timing : f.Gpu)
-						if (timing.Depth == 0)
-							row(PassColor(timing.Name), timing.Name.c_str(), timing.Ms);
-					ImGui::Separator();
-					row(Col(CPU_WORK), "CPU work", f.CpuWorkMs());
-					row(Col(WAIT_GPU), "Waiting for GPU", f.GpuWaitMs());
-					row(Col(WAIT_PRESENT), "Waiting for present", f.PresentWaitMs());
-					ImGui::EndTooltip();
-					if (clicked) {
-						m_ProfilerPinned = hoveredIndex;
-						profiler.SetPaused(true);
-					}
-				}
-
-				// la legenda
-				ImGui::SetCursorScreenPos(ImVec2(plotMin.x, plotMax.y + 10.0f * s));
-				bool first = true;
-				for (const PassKey& key : keys) {
-					if (key.Depth != 0)
-						continue;
-					if (!first)
-						ImGui::SameLine(0.0f, 16.0f * s);
-					first = false;
-					Swatch(PassColor(key.Name));
-					ImGui::TextColored(Theme::TextDim, "%s", key.Name.c_str());
-				}
-				ImGui::SameLine(0.0f, 16.0f * s);
-				Swatch(Col(GHOST));
-				ImGui::TextColored(Theme::TextDim, "CPU frame");
-
+		// ---- grafico e tabelle: affiancati, o uno sopra l'altro se il pannello e' stretto
+		const float tablesW = 470.0f * s;
+		const float lines = ImGui::GetTextLineHeightWithSpacing();
+		if (ImGui::GetContentRegionAvail().x >= tablesW + 360.0f * s) {
+			const float plotH = std::clamp(ImGui::GetContentRegionAvail().y - 3.0f * lines - 30.0f * s, 60.0f * s, 280.0f * s);
+			if (ImGui::BeginTable("##profiler", 2, ImGuiTableFlags_SizingStretchProp)) {
+				ImGui::TableSetupColumn("graph", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableSetupColumn("passes", ImGuiTableColumnFlags_WidthFixed, tablesW);
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				DrawProfilerGraph(range, plotH);
+				ImGui::TableSetColumnIndex(1);
+				DrawProfilerTables(range);
+				ImGui::EndTable();
 			}
-
-			// ---- la tabella delle passate GPU
-			ImGui::TableSetColumnIndex(1);
-			{
-				std::optional<CpuScope> tableScope(std::in_place, "GPU table");
-				const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit;
-				ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
-				ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
-				const bool compare = m_ProfilerReferenceFrameMs > 0.0f;
-				if (ImGui::BeginTable("##gpu", compare ? 7 : 6, flags)) {
-					const float numW = 50.0f * s;
-					ImGui::TableSetupColumn("GPU pass", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("min", ImGuiTableColumnFlags_WidthFixed, numW);
-					ImGui::TableSetupColumn(pinned ? "frame" : "avg", ImGuiTableColumnFlags_WidthFixed, numW + 4.0f * s);
-					ImGui::TableSetupColumn("p99", ImGuiTableColumnFlags_WidthFixed, numW);
-					ImGui::TableSetupColumn("max", ImGuiTableColumnFlags_WidthFixed, numW);
-					ImGui::TableSetupColumn("%", ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
-					if (compare)
-						ImGui::TableSetupColumn("vs ref", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
-					ImGui::TableHeadersRow();
-
-					const float frameRef = pinned ? pinnedFrame->FrameMs : diagnosis.FrameMs;
-					for (const PassKey& key : keys) {
-						std::vector<float> values;
-						for (const FrameRecord* f : frames)
-							values.push_back(PassMs(*f, key));
-						const Summary sum = Summarize(values);
-						const float shown = pinned ? PassMs(*pinnedFrame, key) : sum.Avg;
-
-						ImGui::TableNextRow();
-						ImGui::TableSetColumnIndex(0);
-						if (key.Depth == 0) {
-							Swatch(PassColor(key.Name));
-							ImGui::TextUnformatted(key.Name.c_str());
-						}
-						else {
-							ImGui::Indent(18.0f * s * key.Depth);
-							ImGui::TextColored(Theme::TextDim, "%s", key.Name.c_str());
-							ImGui::Unindent(18.0f * s * key.Depth);
-						}
-						ImGui::PushFont(UI::MonoFont());
-						const float cells[4] = { sum.Min, shown, sum.P99, sum.Max };
-						for (int c = 0; c < 4; c++) {
-							ImGui::TableSetColumnIndex(c + 1);
-							char text[16];
-							snprintf(text, sizeof(text), "%.2f", cells[c]);
-							ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(text).x);
-							if (c == 1)
-								ImGui::TextUnformatted(text);
-							else
-								ImGui::TextColored(Theme::TextDim, "%s", text);
-						}
-						ImGui::TableSetColumnIndex(5);
-						const std::string pct = Percent(shown, frameRef);
-						ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(pct.c_str()).x);
-						ImGui::TextColored(Theme::TextDim, "%s", pct.c_str());
-						if (compare) {
-							ImGui::TableSetColumnIndex(6);
-							DeltaCell(m_ProfilerReference, GpuKey(key), shown);
-						}
-						ImGui::PopFont();
-					}
-					ImGui::EndTable();
-				}
-				ImGui::PopStyleColor(2);
-				ImGui::Spacing();
-				if (pinned)
-					ImGui::TextWrapped("Values are the pinned frame; min, p99 and max stay over the %zu-frame window. Resume or press Esc to go back to averages.", frames.size());
-				else
-					ImGui::TextDisabled(compare ? "Averages over the last %zu frames; vs ref: orange slower, blue faster." : "Averages over the last %zu frames. Click a bar to pin a frame.", frames.size());
-
-				// ---- il throughput: le ray query contate dallo shader sul tempo del path tracer
-				{
-					double rays = 0.0, pixels = 0.0, ptMs = 0.0;
-					size_t counted = 0;
-					auto add = [&](const FrameRecord& f) {
-						if (f.Rays == 0)
-							return;
-						rays += f.Rays;
-						pixels += f.Pixels;
-						ptMs += f.GpuMs("Path tracer");
-						counted++;
-					};
-					if (pinned)
-						add(*pinnedFrame);
-					else
-						for (const FrameRecord* f : frames)
-							add(*f);
-					ImGui::Spacing();
-					ImGui::PushFont(UI::BoldFont());
-					ImGui::TextUnformatted("Throughput");
-					ImGui::PopFont();
-					ImGui::SameLine();
-					if (counted == 0 || ptMs <= 0.0)
-						ImGui::TextDisabled("counting rays...");
-					else {
-						char text[96];
-						snprintf(text, sizeof(text), "%.0f", rays / ptMs / 1000.0);
-						ImGui::PushFont(UI::MonoFont());
-						ImGui::TextUnformatted(text);
-						ImGui::PopFont();
-						ImGui::SameLine(0.0f, 4.0f * s);
-						ImGui::TextColored(Theme::TextDim, "Mrays/s \xc2\xb7");
-						ImGui::SameLine();
-						snprintf(text, sizeof(text), "%.2f M", rays / counted / 1e6);
-						ImGui::PushFont(UI::MonoFont());
-						ImGui::TextUnformatted(text);
-						ImGui::PopFont();
-						ImGui::SameLine(0.0f, 4.0f * s);
-						ImGui::TextColored(Theme::TextDim, "rays/frame \xc2\xb7");
-						ImGui::SameLine();
-						snprintf(text, sizeof(text), "%.2f", rays / pixels);
-						ImGui::PushFont(UI::MonoFont());
-						ImGui::TextUnformatted(text);
-						ImGui::PopFont();
-						ImGui::SameLine(0.0f, 4.0f * s);
-						ImGui::TextColored(Theme::TextDim, "rays/pixel");
-						if (ImGui::IsItemHovered())
-							ImGui::SetTooltip("Every ray query of the path tracer: camera rays, bounces and NEE shadow rays");
-					}
-				}
-
-				// ---- la tabella degli scope CPU, ad albero
-				tableScope.emplace("CPU table");
-				ImGui::Spacing();
-				const std::vector<CpuRow> rows = CpuRows(frames);
-				const std::vector<std::vector<float>> series = CpuSeries(rows, frames);
-				ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
-				ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
-				if (ImGui::BeginTable("##cpu", compare ? 5 : 4, flags | ImGuiTableFlags_ScrollY, ImVec2(0.0f, std::max(ImGui::GetContentRegionAvail().y, 80.0f * s)))) {
-					ImGui::TableSetupScrollFreeze(0, 1);
-					ImGui::TableSetupColumn("CPU scope", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn(pinned ? "frame" : "avg", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
-					ImGui::TableSetupColumn("p99", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
-					ImGui::TableSetupColumn("% frame", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
-					if (compare)
-						ImGui::TableSetupColumn("vs ref", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
-					ImGui::TableHeadersRow();
-
-					int collapsedDepth = -1; // i discendenti di una riga chiusa non si mostrano
-					for (size_t r = 0; r < rows.size(); r++) {
-						const CpuRow& row = rows[r];
-						if (collapsedDepth >= 0 && row.Depth > collapsedDepth)
-							continue;
-						collapsedDepth = -1;
-						const bool parent = r + 1 < rows.size() && rows[r + 1].Depth > row.Depth;
-						const bool collapsed = parent && m_ProfilerCollapsed.count(row.Key) > 0;
-						if (collapsed)
-							collapsedDepth = row.Depth;
-
-						const Summary sum = Summarize(series[r]);
-						const float shown = pinned ? series[r][m_ProfilerPinned] : sum.Avg;
-						const float frameRef = pinned ? series[0][m_ProfilerPinned] : diagnosis.FrameMs;
-
-						ImGui::TableNextRow();
-						ImGui::TableSetColumnIndex(0);
-						ImGui::PushID(row.Key.c_str());
-						ImGui::Indent(16.0f * s * row.Depth);
-						const ImVec4 tone = row.Depth <= 1 ? Theme::Text : Theme::TextDim;
-						if (parent) {
-							const std::string label = std::string(collapsed ? ICON_CHEVRON_RIGHT " " : ICON_CHEVRON_DOWN " ") + row.Name;
-							ImGui::PushStyleColor(ImGuiCol_Text, tone);
-							if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
-								if (collapsed)
-									m_ProfilerCollapsed.erase(row.Key);
-								else
-									m_ProfilerCollapsed.insert(row.Key);
-							}
-							ImGui::PopStyleColor();
-						}
-						else {
-							ImGui::Dummy(ImVec2(ImGui::CalcTextSize(ICON_CHEVRON_DOWN " ").x, 0.0f));
-							ImGui::SameLine(0.0f, 0.0f);
-							ImGui::TextColored(row.Id == RowUntracked ? Theme::TextDim : tone, "%s", row.Name.c_str());
-						}
-						ImGui::Unindent(16.0f * s * row.Depth);
-						ImGui::PopID();
-
-						ImGui::PushFont(UI::MonoFont());
-						char text[3][24];
-						snprintf(text[0], sizeof(text[0]), "%.2f", shown);
-						snprintf(text[1], sizeof(text[1]), "%.2f", sum.P99);
-						snprintf(text[2], sizeof(text[2]), "%s", Percent(shown, frameRef).c_str());
-						for (int c = 0; c < 3; c++) {
-							ImGui::TableSetColumnIndex(c + 1);
-							ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(text[c]).x);
-							if (c == 0)
-								ImGui::TextUnformatted(text[c]);
-							else
-								ImGui::TextColored(Theme::TextDim, "%s", text[c]);
-						}
-						if (compare) {
-							ImGui::TableSetColumnIndex(4);
-							DeltaCell(m_ProfilerReference, CpuKey(row), shown);
-						}
-						ImGui::PopFont();
-					}
-					ImGui::EndTable();
-				}
-				ImGui::PopStyleColor(2);
-			}
-			ImGui::EndTable();
+		}
+		else {
+			DrawProfilerGraph(range, std::clamp(ImGui::GetContentRegionAvail().y * 0.35f, 80.0f * s, 220.0f * s));
+			ImGui::Spacing();
+			DrawProfilerTables(range);
 		}
 		ImGui::PopStyleVar();
 		ImGui::End();
+	}
+
+	// Il grafico: una barra per frame, le passate GPU impilate dentro il frame della CPU. Con piu'
+	// frame che pixel ogni colonna mostra il suo frame piu' lungo, cosi' uno spike resta visibile.
+	// Rotella: zoom orizzontale; Ctrl: verticale; Shift o trascinamento destro/centrale: tempo.
+	void Application::DrawProfilerGraph(const ProfilerRange& range, float plotH) {
+		PROFILE_SCOPE("Graph");
+		const float s = UI::Scale();
+		const ProfileStats& stats = m_ProfilerStats->Stats;
+		const std::vector<const FrameRecord*>& frames = range.Frames;
+		ImDrawList* list = ImGui::GetWindowDrawList();
+		ImGuiIO& io = ImGui::GetIO();
+
+		ImGui::PushFont(UI::BoldFont());
+		ImGui::TextUnformatted("Frame time");
+		ImGui::PopFont();
+		ImGui::SameLine();
+		// con l'altezza fissata a mano, al posto dell'aiuto c'e' il pulsante che la rimette automatica
+		if (m_ProfilerYMax > 0.0f) {
+			if (UI::Pill("Auto height"))
+				m_ProfilerYMax = 0.0f;
+		}
+		else
+			ImGui::TextDisabled("wheel zoom \xc2\xb7 ctrl+wheel height \xc2\xb7 right-drag pan \xc2\xb7 click to pin");
+
+		const float avail = ImGui::GetContentRegionAvail().x;
+		const float axisW = 34.0f * s;
+		const float labelH = ImGui::GetTextLineHeight();
+		const ImVec2 origin = ImGui::GetCursorScreenPos();
+		const ImVec2 plotMin(origin.x + axisW, origin.y + 8.0f * s);
+		const ImVec2 plotMax(origin.x + avail - 2.0f * s, plotMin.y + plotH);
+		const float W = std::max(plotMax.x - plotMin.x, 1.0f);
+		ImGui::InvisibleButton("##graph", ImVec2(avail, plotH + 8.0f * s + labelH + 6.0f * s),
+		                       ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+		const bool hovered = ImGui::IsItemHovered();
+		const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+		const bool dragging = ImGui::IsItemActive() && (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle));
+		ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY); // la rotella zooma, non scorre la finestra
+
+		const float autoMax = std::max(2.0f, (stats.Cpu.empty() ? 0.0f : stats.Cpu[0].Sum.P99) * 1.25f); // riga 0: Frame
+		const float yMax = m_ProfilerYMax > 0.0f ? m_ProfilerYMax : autoMax;
+		auto yOf = [&](float ms) { return plotMax.y - std::min(ms, yMax) / yMax * plotH; };
+		const double slots = static_cast<double>(range.Slots);
+		const double firstSlot = slots - static_cast<double>(frames.size());
+		auto xOf = [&](double index) { return plotMin.x + static_cast<float>((firstSlot + index) * W / slots); };
+
+		// ---- navigazione: agisce sul frame dopo, quando il range si ricalcola
+		auto moveEnd = [&](double end) {
+			if (end >= static_cast<double>(range.Last)) {
+				m_ProfilerLive = true;
+				return;
+			}
+			m_ProfilerLive = false;
+			m_ProfilerEnd = end;
+		};
+		const double shown = static_cast<double>(frames.size());
+		if (hovered && io.MouseWheel != 0.0f) {
+			const float wheel = io.MouseWheel;
+			if (io.KeyCtrl)
+				m_ProfilerYMax = std::clamp(yMax * std::pow(0.8f, wheel), 0.05f, 100000.0f);
+			else if (io.KeyShift)
+				moveEnd(static_cast<double>(range.End) - wheel * 0.1 * shown);
+			else {
+				// zoom attorno al mouse; dal vivo il bordo destro resta il presente
+				const double t = std::clamp((io.MousePos.x - plotMin.x) / W, 0.0f, 1.0f);
+				const double newSpan = std::clamp(std::min(m_ProfilerSpan, shown) * std::pow(0.8, wheel), MIN_SPAN, std::max(static_cast<double>(range.Last - range.First), MIN_SPAN));
+				if (!m_ProfilerLive) {
+					const double anchor = static_cast<double>(range.End) - (1.0 - t) * shown;
+					moveEnd(anchor + (1.0 - t) * newSpan);
+				}
+				m_ProfilerSpan = newSpan;
+				m_ProfilerStatsDirty = true;
+			}
+		}
+		if (dragging && io.MouseDelta.x != 0.0f)
+			moveEnd((m_ProfilerLive ? static_cast<double>(range.End) : m_ProfilerEnd) - io.MouseDelta.x / W * shown);
+
+		// ---- le barre: una per frame, o una per colonna di pixel col frame piu' lungo
+		struct Bar { size_t Index; float X0, X1; };
+		std::vector<Bar> bars;
+		const float barW = static_cast<float>(W / slots);
+		if (barW >= 1.0f) {
+			const float gap = barW >= 3.0f ? 1.0f : 0.0f;
+			for (size_t i = 0; i < frames.size(); i++) {
+				const float x0 = xOf(static_cast<double>(i));
+				bars.push_back({ i, x0, std::max(x0 + 1.0f, x0 + barW - gap) });
+			}
+		}
+		else {
+			const int columns = static_cast<int>(W);
+			for (int c = 0; c < columns; c++) {
+				const double a = c * slots / W - firstSlot, b = (c + 1) * slots / W - firstSlot;
+				const size_t i0 = static_cast<size_t>(std::max(0.0, std::ceil(a)));
+				const size_t i1 = static_cast<size_t>(std::clamp(std::ceil(b), 0.0, shown));
+				if (i0 >= i1)
+					continue;
+				size_t worst = i0;
+				for (size_t i = i0 + 1; i < i1; i++)
+					if (frames[i]->FrameMs > frames[worst]->FrameMs)
+						worst = i;
+				const float x0 = plotMin.x + static_cast<float>(c);
+				bars.push_back({ worst, x0, x0 + 1.0f });
+			}
+		}
+		int hoveredBar = -1;
+		if (hovered && !dragging)
+			for (size_t b = 0; b < bars.size(); b++)
+				if (io.MousePos.x >= bars[b].X0 && io.MousePos.x < std::max(bars[b].X1, bars[b].X0 + barW)) {
+					hoveredBar = static_cast<int>(b);
+					break;
+				}
+
+		ImGui::PushFont(UI::MonoFont());
+		const float step = NiceStep(yMax);
+		for (float v = 0.0f; v <= yMax + 1e-3f; v += step) {
+			const float y = yOf(v);
+			list->AddLine(ImVec2(plotMin.x, y), ImVec2(plotMax.x, y), Col(Theme::Header));
+			char tick[16];
+			snprintf(tick, sizeof(tick), "%g", v);
+			const ImVec2 size = ImGui::CalcTextSize(tick);
+			list->AddText(ImVec2(plotMin.x - 6.0f * s - size.x, y - size.y * 0.5f), Col(Theme::TextDim), tick);
+		}
+		const int64_t pinnedIndex = m_ProfilerPinned >= 0 && static_cast<uint64_t>(m_ProfilerPinned) >= range.Begin && static_cast<uint64_t>(m_ProfilerPinned) < range.End
+		                          ? m_ProfilerPinned - static_cast<int64_t>(range.Begin) : -1;
+		list->PushClipRect(ImVec2(plotMin.x, plotMin.y - 1.0f), ImVec2(plotMax.x, plotMax.y + 1.0f), true);
+		for (size_t b = 0; b < bars.size(); b++) {
+			const FrameRecord& f = *frames[bars[b].Index];
+			const float x0 = bars[b].X0, x1 = bars[b].X1;
+			list->AddRectFilled(ImVec2(x0, yOf(f.FrameMs)), ImVec2(x1, plotMax.y), Col(GHOST));
+			float bottom = plotMax.y, stacked = 0.0f;
+			for (const GpuTiming& timing : f.Gpu) {
+				if (timing.Depth != 0)
+					continue;
+				stacked += timing.Ms;
+				const float top = yOf(stacked);
+				list->AddRectFilled(ImVec2(x0, top), ImVec2(x1, bottom), PassColor(timing.Name));
+				bottom = top;
+			}
+			if (static_cast<int>(b) == hoveredBar)
+				list->AddRectFilled(ImVec2(x0, plotMin.y), ImVec2(x1, plotMax.y), Col(Theme::Rgb(0xffffff, 0.10f)));
+		}
+		if (pinnedIndex >= 0) {
+			const float x0 = std::floor(xOf(static_cast<double>(pinnedIndex)));
+			const float x1 = std::max(x0 + 1.0f, xOf(static_cast<double>(pinnedIndex) + 1.0) - (barW >= 3.0f ? 1.0f : 0.0f));
+			list->AddRect(ImVec2(x0 - 1.0f, plotMin.y), ImVec2(x1 + 1.0f, plotMax.y), Col(Theme::SelectedText));
+		}
+		list->PopClipRect();
+		list->AddLine(ImVec2(plotMin.x, plotMax.y), ImVec2(plotMax.x, plotMax.y), Col(Theme::Border));
+
+		// ---- l'asse del tempo: quanto prima di adesso, contando le durate dei frame da destra
+		{
+			const float stepMs = NiceStep(static_cast<float>(std::max(range.DurationMs, 1.0)) * 0.66f);
+			double ago = range.AgoMs;
+			double next = std::ceil(ago / stepMs) * stepMs;
+			float lastLabelX = plotMax.x + 1000.0f;
+			for (size_t i = frames.size(); i-- > 0 && next <= range.AgoMs + range.DurationMs + 1e-6;) {
+				const double frameEnd = ago + frames[i]->FrameMs;
+				for (; next <= frameEnd; next += stepMs) {
+					const float x = xOf(static_cast<double>(i) + 1.0 - (next - ago) / std::max(static_cast<double>(frames[i]->FrameMs), 1e-6));
+					char text[32];
+					if (next < 0.5)
+						snprintf(text, sizeof(text), "now");
+					else if (next >= 1000.0)
+						snprintf(text, sizeof(text), "-%g s", next / 1000.0);
+					else
+						snprintf(text, sizeof(text), "-%g ms", next);
+					const float tw = ImGui::CalcTextSize(text).x;
+					if (x + tw * 0.5f < lastLabelX - 10.0f * s && x - tw * 0.5f >= plotMin.x - axisW) {
+						list->AddLine(ImVec2(x, plotMax.y), ImVec2(x, plotMax.y + 4.0f * s), Col(Theme::Border));
+						list->AddText(ImVec2(std::min(x - tw * 0.5f, plotMax.x - tw), plotMax.y + 5.0f * s), Col(Theme::TextDim), text);
+						lastLabelX = x - tw * 0.5f;
+					}
+				}
+				ago = frameEnd;
+			}
+		}
+
+		// i riferimenti: 60 Hz e il refresh del display, se e' diverso
+		const float refresh = DisplayRefreshHz();
+		auto refLine = [&](float ms, const char* text, ImU32 color) {
+			if (ms > yMax)
+				return;
+			const float y = yOf(ms);
+			list->AddLine(ImVec2(plotMin.x, y), ImVec2(plotMax.x, y), color);
+			const ImVec2 size = ImGui::CalcTextSize(text);
+			const ImVec2 at(plotMax.x - size.x - 8.0f * s, y - size.y - 2.0f * s);
+			list->AddRectFilled(ImVec2(at.x - 4.0f * s, at.y), ImVec2(at.x + size.x + 4.0f * s, at.y + size.y), Col(Theme::Panel));
+			list->AddText(at, color, text);
+		};
+		char refText[64];
+		if (std::abs(refresh - 60.0f) > 0.5f) {
+			refLine(1000.0f / 60.0f, "60 Hz \xc2\xb7 16.7 ms", Col(Theme::TextDim));
+			snprintf(refText, sizeof(refText), "display %.0f Hz \xc2\xb7 %.1f ms", refresh, 1000.0f / refresh);
+		}
+		else
+			snprintf(refText, sizeof(refText), "display 60 Hz \xc2\xb7 16.7 ms");
+		refLine(1000.0f / refresh, refText, Col(Theme::Accent));
+		if (m_ProfilerReferenceFrameMs > 0.0f && m_ProfilerReferenceFrameMs <= yMax) {
+			const float y = yOf(m_ProfilerReferenceFrameMs);
+			for (float x = plotMin.x; x < plotMax.x; x += 8.0f * s)
+				list->AddLine(ImVec2(x, y), ImVec2(std::min(x + 4.0f * s, plotMax.x), y), Col(Theme::IconSky), 1.5f);
+			char text[48];
+			snprintf(text, sizeof(text), "reference \xc2\xb7 %.2f ms", m_ProfilerReferenceFrameMs);
+			list->AddText(ImVec2(plotMin.x + 6.0f * s, y - ImGui::GetTextLineHeight() - 2.0f * s), Col(Theme::IconSky), text);
+		}
+		ImGui::PopFont();
+
+		if (hoveredBar >= 0) {
+			const size_t index = bars[hoveredBar].Index;
+			const FrameRecord& f = *frames[index];
+			const uint64_t number = range.Begin + index;
+			double ago = range.AgoMs;
+			for (size_t i = index + 1; i < frames.size(); i++)
+				ago += frames[i]->FrameMs;
+			ImGui::BeginTooltip();
+			ImGui::PushFont(UI::BoldFont());
+			ImGui::Text("Frame %lld", static_cast<long long>(number) - static_cast<long long>(range.Last) + 1);
+			ImGui::PopFont();
+			ImGui::SameLine(160.0f * s);
+			ImGui::PushFont(UI::MonoFont());
+			ImGui::Text("%.2f ms", f.FrameMs);
+			ImGui::PopFont();
+			ImGui::TextColored(Theme::TextDim, "%s ago%s", FormatDuration(ago).c_str(), barW < 1.0f ? " \xc2\xb7 longest in this column" : "");
+			auto row = [&](ImU32 color, const char* name, float ms) {
+				Swatch(color);
+				ImGui::TextColored(Theme::TextDim, "%s", name);
+				ImGui::SameLine(160.0f * s);
+				ImGui::PushFont(UI::MonoFont());
+				ImGui::Text("%.2f", ms);
+				ImGui::PopFont();
+			};
+			for (const GpuTiming& timing : f.Gpu)
+				if (timing.Depth == 0)
+					row(PassColor(timing.Name), timing.Name.c_str(), timing.Ms);
+			ImGui::Separator();
+			row(Col(CPU_WORK), "CPU work", f.CpuWorkMs());
+			row(Col(WAIT_GPU), "Waiting for GPU", f.GpuWaitMs());
+			row(Col(WAIT_PRESENT), "Waiting for present", f.PresentWaitMs());
+			ImGui::EndTooltip();
+			if (clicked) {
+				// fissare un frame stacca la vista dal presente: non scorre via mentre lo si legge
+				m_ProfilerPinned = static_cast<int64_t>(number);
+				if (m_ProfilerLive) {
+					m_ProfilerLive = false;
+					m_ProfilerEnd = static_cast<double>(range.End);
+				}
+			}
+		}
+
+		// la legenda
+		ImGui::SetCursorScreenPos(ImVec2(plotMin.x, plotMax.y + labelH + 14.0f * s));
+		bool first = true;
+		for (const PassKey& key : stats.Keys) {
+			if (key.Depth != 0)
+				continue;
+			if (!first)
+				ImGui::SameLine(0.0f, 16.0f * s);
+			first = false;
+			Swatch(PassColor(key.Name));
+			ImGui::TextColored(Theme::TextDim, "%s", key.Name.c_str());
+		}
+		ImGui::SameLine(0.0f, 16.0f * s);
+		Swatch(Col(GHOST));
+		ImGui::TextColored(Theme::TextDim, "CPU frame");
+	}
+
+	// Le tabelle delle passate GPU e degli scope CPU sul range visibile; col frame fissato la
+	// colonna centrale mostra i suoi valori
+	void Application::DrawProfilerTables(const ProfilerRange& range) {
+		std::optional<CpuScope> tableScope(std::in_place, "GPU table");
+		const float s = UI::Scale();
+		const ProfileStats& stats = m_ProfilerStats->Stats;
+		const FrameRecord* pinnedFrame = range.Pinned;
+		const bool pinned = pinnedFrame != nullptr;
+		const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit;
+		ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
+		ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
+		const bool compare = m_ProfilerReferenceFrameMs > 0.0f;
+		if (ImGui::BeginTable("##gpu", compare ? 7 : 6, flags)) {
+			const float numW = 50.0f * s;
+			ImGui::TableSetupColumn("GPU pass", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("min", ImGuiTableColumnFlags_WidthFixed, numW);
+			ImGui::TableSetupColumn(pinned ? "frame" : "avg", ImGuiTableColumnFlags_WidthFixed, numW + 4.0f * s);
+			ImGui::TableSetupColumn("p99", ImGuiTableColumnFlags_WidthFixed, numW);
+			ImGui::TableSetupColumn("max", ImGuiTableColumnFlags_WidthFixed, numW);
+			ImGui::TableSetupColumn("%", ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+			if (compare)
+				ImGui::TableSetupColumn("vs ref", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
+			ImGui::TableHeadersRow();
+
+			const float frameRef = pinned ? pinnedFrame->FrameMs : stats.Diag.FrameMs;
+			for (size_t k = 0; k < stats.Keys.size(); k++) {
+				const PassKey& key = stats.Keys[k];
+				const Summary& sum = stats.Gpu[k].Sum;
+				const float shown = pinned ? PassMs(*pinnedFrame, key) : sum.Avg;
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				if (key.Depth == 0) {
+					Swatch(PassColor(key.Name));
+					ImGui::TextUnformatted(key.Name.c_str());
+				}
+				else {
+					ImGui::Indent(18.0f * s * key.Depth);
+					ImGui::TextColored(Theme::TextDim, "%s", key.Name.c_str());
+					ImGui::Unindent(18.0f * s * key.Depth);
+				}
+				ImGui::PushFont(UI::MonoFont());
+				const float cells[4] = { sum.Min, shown, sum.P99, sum.Max };
+				for (int c = 0; c < 4; c++) {
+					ImGui::TableSetColumnIndex(c + 1);
+					char text[16];
+					snprintf(text, sizeof(text), "%.2f", cells[c]);
+					ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(text).x);
+					if (c == 1)
+						ImGui::TextUnformatted(text);
+					else
+						ImGui::TextColored(Theme::TextDim, "%s", text);
+				}
+				ImGui::TableSetColumnIndex(5);
+				const std::string pct = Percent(shown, frameRef);
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(pct.c_str()).x);
+				ImGui::TextColored(Theme::TextDim, "%s", pct.c_str());
+				if (compare) {
+					ImGui::TableSetColumnIndex(6);
+					DeltaCell(m_ProfilerReference, GpuKey(key), shown);
+				}
+				ImGui::PopFont();
+			}
+			ImGui::EndTable();
+		}
+		ImGui::PopStyleColor(2);
+		ImGui::Spacing();
+		if (pinned)
+			ImGui::TextWrapped("Values are the pinned frame; min, p99 and max stay over the %zu visible frames. Live or Esc go back to the present.", stats.Frames);
+		else
+			ImGui::TextDisabled(compare ? "Averages over the %zu visible frames; vs ref: orange slower, blue faster." : "Averages over the %zu visible frames. Click a bar to pin a frame.", stats.Frames);
+
+		// ---- il throughput: le ray query contate dallo shader sul tempo del path tracer
+		{
+			double rays = 0.0, pixels = 0.0, ptMs = 0.0;
+			size_t counted = 0;
+			if (pinned) {
+				if (pinnedFrame->Rays > 0) {
+					rays = pinnedFrame->Rays;
+					pixels = pinnedFrame->Pixels;
+					ptMs = pinnedFrame->GpuMs("Path tracer");
+					counted = 1;
+				}
+			}
+			else {
+				rays = stats.Rays;
+				pixels = stats.Pixels;
+				ptMs = stats.PathTracerMs;
+				counted = stats.CountedFrames;
+			}
+			ImGui::Spacing();
+			ImGui::PushFont(UI::BoldFont());
+			ImGui::TextUnformatted("Throughput");
+			ImGui::PopFont();
+			ImGui::SameLine();
+			if (counted == 0 || ptMs <= 0.0)
+				ImGui::TextDisabled("counting rays...");
+			else {
+				char text[96];
+				snprintf(text, sizeof(text), "%.0f", rays / ptMs / 1000.0);
+				ImGui::PushFont(UI::MonoFont());
+				ImGui::TextUnformatted(text);
+				ImGui::PopFont();
+				ImGui::SameLine(0.0f, 4.0f * s);
+				ImGui::TextColored(Theme::TextDim, "Mrays/s \xc2\xb7");
+				ImGui::SameLine();
+				snprintf(text, sizeof(text), "%.2f M", rays / counted / 1e6);
+				ImGui::PushFont(UI::MonoFont());
+				ImGui::TextUnformatted(text);
+				ImGui::PopFont();
+				ImGui::SameLine(0.0f, 4.0f * s);
+				ImGui::TextColored(Theme::TextDim, "rays/frame \xc2\xb7");
+				ImGui::SameLine();
+				snprintf(text, sizeof(text), "%.2f", rays / pixels);
+				ImGui::PushFont(UI::MonoFont());
+				ImGui::TextUnformatted(text);
+				ImGui::PopFont();
+				ImGui::SameLine(0.0f, 4.0f * s);
+				ImGui::TextColored(Theme::TextDim, "rays/pixel");
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Every ray query of the path tracer: camera rays, bounces and NEE shadow rays");
+			}
+		}
+
+		// ---- la tabella degli scope CPU, ad albero
+		tableScope.emplace("CPU table");
+		ImGui::Spacing();
+		const std::vector<CpuRow>& rows = stats.Rows;
+		std::vector<std::vector<float>> pinnedSeries;
+		if (pinned)
+			pinnedSeries = CpuSeries(rows, { pinnedFrame });
+		ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, Theme::Header);
+		ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, Theme::Rgb(0x26262b));
+		if (ImGui::BeginTable("##cpu", compare ? 5 : 4, flags | ImGuiTableFlags_ScrollY, ImVec2(0.0f, std::max(ImGui::GetContentRegionAvail().y, 80.0f * s)))) {
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableSetupColumn("CPU scope", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn(pinned ? "frame" : "avg", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+			ImGui::TableSetupColumn("p99", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+			ImGui::TableSetupColumn("% frame", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+			if (compare)
+				ImGui::TableSetupColumn("vs ref", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
+			ImGui::TableHeadersRow();
+
+			int collapsedDepth = -1; // i discendenti di una riga chiusa non si mostrano
+			for (size_t r = 0; r < rows.size(); r++) {
+				const CpuRow& row = rows[r];
+				if (collapsedDepth >= 0 && row.Depth > collapsedDepth)
+					continue;
+				collapsedDepth = -1;
+				const bool parent = r + 1 < rows.size() && rows[r + 1].Depth > row.Depth;
+				const bool collapsed = parent && m_ProfilerCollapsed.count(row.Key) > 0;
+				if (collapsed)
+					collapsedDepth = row.Depth;
+
+				const Summary& sum = stats.Cpu[r].Sum;
+				const float shown = pinned ? pinnedSeries[r][0] : sum.Avg;
+				const float frameRef = pinned ? pinnedSeries[0][0] : stats.Diag.FrameMs;
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::PushID(row.Key.c_str());
+				ImGui::Indent(16.0f * s * row.Depth);
+				const ImVec4 tone = row.Depth <= 1 ? Theme::Text : Theme::TextDim;
+				if (parent) {
+					const std::string label = std::string(collapsed ? ICON_CHEVRON_RIGHT " " : ICON_CHEVRON_DOWN " ") + row.Name;
+					ImGui::PushStyleColor(ImGuiCol_Text, tone);
+					if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+						if (collapsed)
+							m_ProfilerCollapsed.erase(row.Key);
+						else
+							m_ProfilerCollapsed.insert(row.Key);
+					}
+					ImGui::PopStyleColor();
+				}
+				else {
+					ImGui::Dummy(ImVec2(ImGui::CalcTextSize(ICON_CHEVRON_DOWN " ").x, 0.0f));
+					ImGui::SameLine(0.0f, 0.0f);
+					ImGui::TextColored(row.Id == RowUntracked ? Theme::TextDim : tone, "%s", row.Name.c_str());
+				}
+				ImGui::Unindent(16.0f * s * row.Depth);
+				ImGui::PopID();
+
+				ImGui::PushFont(UI::MonoFont());
+				char text[3][24];
+				snprintf(text[0], sizeof(text[0]), "%.2f", shown);
+				snprintf(text[1], sizeof(text[1]), "%.2f", sum.P99);
+				snprintf(text[2], sizeof(text[2]), "%s", Percent(shown, frameRef).c_str());
+				for (int c = 0; c < 3; c++) {
+					ImGui::TableSetColumnIndex(c + 1);
+					ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetColumnWidth() - ImGui::CalcTextSize(text[c]).x);
+					if (c == 0)
+						ImGui::TextUnformatted(text[c]);
+					else
+						ImGui::TextColored(Theme::TextDim, "%s", text[c]);
+				}
+				if (compare) {
+					ImGui::TableSetColumnIndex(4);
+					DeltaCell(m_ProfilerReference, CpuKey(row), shown);
+				}
+				ImGui::PopFont();
+			}
+			ImGui::EndTable();
+		}
+		ImGui::PopStyleColor(2);
 	}
 }

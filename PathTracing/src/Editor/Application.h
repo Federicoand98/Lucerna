@@ -16,6 +16,7 @@
 #include "Editor/Document.h"
 #include "Editor/BlenderLink.h"
 #include <functional>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include "Editor/Camera.h"
@@ -57,6 +58,9 @@ namespace Lucerna {
 		// La rotazione di una luce orienta lo spot.
 		bool SupportsRotation() const { return Type == SelectionType::Quad || Type == SelectionType::Mesh || Type == SelectionType::Light; }
 	};
+
+	struct ProfilerViewStats; // ProfilerPanel.cpp
+	struct ProfilerRange;
 
 	class Application {
 	public:
@@ -100,6 +104,8 @@ namespace Lucerna {
 		void DrawFilmSection();
 		void DrawDeveloperSection();
 		void DrawProfilerPanel();         // ProfilerPanel.cpp
+		void DrawProfilerGraph(const ProfilerRange& range, float height);
+		void DrawProfilerTables(const ProfilerRange& range);
 		void DrawLoadingTab();
 		void DrawMemoryTab();
 		void DockProfilerUnderViewport(); // la prima volta, con un imgui.ini di prima del profiler
@@ -179,10 +185,18 @@ namespace Lucerna {
 		PropertiesTab m_PropertiesTab = PropertiesTab::Object;
 		bool m_ShowOutliner = true, m_ShowMaterials = true, m_ShowProperties = true;
 		bool m_ShowHud = true, m_ShowDeveloper = false, m_ShowPreferences = false;
-		// Il profiler (issue #31): finestra dello storico scelta (indice in 120/300/1000 frame),
-		// il frame fissato col clic (-1 nessuno), e se ha il focus (Esc riprende invece di deselezionare)
+		// Il profiler (issue #31, ADR 0023): se ha il focus Esc torna al live invece di deselezionare
 		bool m_ShowProfiler = false, m_ProfilerDockChecked = false, m_ProfilerFocused = false, m_FocusProfiler = false;
-		int m_ProfilerWindow = 1, m_ProfilerPinned = -1;
+		// La vista del grafico sullo storico, in numeri di giro (Profiler::FirstFrame): live segue
+		// il presente; se no la vista finisce a m_ProfilerEnd. Span e' quanti frame si vedono,
+		// YMax la scala verticale (0 = automatica), Pinned il frame fissato col clic (-1 nessuno).
+		bool m_ProfilerLive = true;
+		double m_ProfilerEnd = 0.0, m_ProfilerSpan = 600.0;
+		float m_ProfilerYMax = 0.0f;
+		int64_t m_ProfilerPinned = -1;
+		// le statistiche del range visibile, ricalcolate solo quando serve (ProfilerPanel.cpp)
+		std::shared_ptr<ProfilerViewStats> m_ProfilerStats;
+		bool m_ProfilerStatsDirty = true;
 		int m_ProfilerTab = 0; // 0 Frame, 1 Loading, 2 Memory
 		std::unordered_set<std::string> m_ProfilerCollapsed; // le righe chiuse della tabella CPU, per percorso
 		// Il riferimento A/B: la media di ogni riga quando lo si e' salvato; frame 0 = nessuno

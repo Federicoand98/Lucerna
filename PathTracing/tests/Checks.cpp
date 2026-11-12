@@ -103,10 +103,9 @@ int main() {
 		CHECK(profiler.History()[0].Gpu[0].Name == "Path tracer" && profiler.History()[0].Gpu[1].Name == "BLAS build");
 		profiler.AttachFrameGpu({ { "Path tracer", 0, 1.0f } }); // niente in attesa: si ignora
 		CHECK(profiler.History().size() == 1);
-		profiler.SetPaused(true);                     // in pausa lo storico resta, Latest no
 		profiler.BeginFrame();
 		profiler.AttachFrameGpu({ { "Path tracer", 0, 7.0f } });
-		CHECK(profiler.History().size() == 1 && profiler.Latest().GpuMs("Path tracer") == 7.0f);
+		CHECK(profiler.History().size() == 2 && profiler.Latest().GpuMs("Path tracer") == 7.0f);
 		profiler.BeginFrame();
 		profiler.BeginFrame();                        // un giro senza GPU (finestra ridotta) si tiene lo stesso
 		CHECK(profiler.Latest().Gpu.empty());
@@ -126,8 +125,9 @@ int main() {
 		profiler.AttachFrameGpu({});
 		const std::vector<CpuTiming>& cpu = profiler.History().back().Cpu;
 		CHECK(cpu.size() == 4);
-		CHECK(cpu.size() == 4 && cpu[0].Name == "A" && cpu[0].Depth == 0 && cpu[1].Name == "B" && cpu[1].Depth == 1);
-		CHECK(cpu.size() == 4 && cpu[2].Name == "C" && cpu[2].Depth == 0 && cpu[3].Name == "left open");
+		auto name = [&](size_t i) { return profiler.ScopeName(cpu[i].Id); };
+		CHECK(cpu.size() == 4 && name(0) == "A" && cpu[0].Depth == 0 && name(1) == "B" && cpu[1].Depth == 1);
+		CHECK(cpu.size() == 4 && name(2) == "C" && cpu[2].Depth == 0 && name(3) == "left open");
 		CHECK(cpu.size() == 4 && cpu[0].Ms >= cpu[1].Ms);
 		CHECK(cpu.size() == 4 && profiler.ScopePath(cpu[1].Id) == "A/B" && profiler.ScopeParent(cpu[1].Id) == static_cast<int>(cpu[0].Id));
 		CHECK(cpu.size() == 4 && profiler.ScopeParent(cpu[2].Id) == -1 && cpu[2].Id != cpu[0].Id);
@@ -140,6 +140,14 @@ int main() {
 		profiler.BeginFrame();
 		profiler.AttachFrameGpu({});
 		CHECK(profiler.History().back().Cpu.size() == Profiler::MaxScopes);
+		profiler.Reset();
+
+		// lo storico non passa MaxFrames giri, e FirstFrame conta anche quelli usciti
+		for (size_t i = 0; i < Profiler::MaxFrames + 6; i++) {
+			profiler.BeginFrame();
+			profiler.AttachFrameGpu({});
+		}
+		CHECK(profiler.History().size() == Profiler::MaxFrames && profiler.FirstFrame() == 5);
 		profiler.Reset();
 
 		// la RAM del processo si legge, e il picco non e' mai sotto la residente
