@@ -12,6 +12,10 @@
 #include "imgui_internal.h"
 #include "imgui_impl_vulkan.h"
 
+// Pubbliche in imgui_impl_vulkan.cpp ma assenti dall'header (ImGui 1.90): servono a RebuildUiForScale
+bool ImGui_ImplVulkan_CreateDeviceObjects();
+void ImGui_ImplVulkan_DestroyDeviceObjects();
+
 namespace Lucerna {
 
 	namespace {
@@ -210,6 +214,13 @@ namespace Lucerna {
 			if (m_Preferences.SystemTitleBar == m_CustomTitleBar) {
 				UI::Label("");
 				ImGui::TextDisabled("applies on the next start");
+			}
+			// font e stile si rifanno solo quando si lascia lo slider: rifarli a ogni passo lo
+			// sposterebbe sotto il mouse
+			UI::SliderFloat("UI scale", &m_Preferences.UiScale, Preferences::MIN_UI_SCALE, Preferences::MAX_UI_SCALE, "%.2f");
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				m_Preferences.Save();
+				m_RescaleRequested = true;
 			}
 			UI::Label("Device");
 			ImGui::TextDisabled("%s", m_Vulkan.DeviceName());
@@ -445,12 +456,21 @@ namespace Lucerna {
 			ImGui::SetTooltip(m_Renderer.View.PathTracing ? "Pause accumulation" : "Resume accumulation");
 
 		const char* hint = m_FocusPickArmed ? "click a point to focus" : "right mouse + WASD  G R S  Del";
-		ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 10.0f * s, ImGui::GetWindowWidth() - ImGui::CalcTextSize(hint).x - 12.0f * s));
-		ImGui::AlignTextToFramePadding();
-		if (m_FocusPickArmed)
-			ImGui::TextColored(Theme::Accent, "%s", hint);
+		// a destra dei pulsanti; se non ci sta (finestra stretta, UI scale alta) l'aiuto si toglie,
+		// l'avviso del focus no
+		ImGui::SameLine();
+		const float hintW = ImGui::CalcTextSize(hint).x;
+		const float hintX = std::max(ImGui::GetCursorPosX() + 10.0f * s, ImGui::GetWindowWidth() - hintW - 12.0f * s);
+		if (m_FocusPickArmed || hintX + hintW <= ImGui::GetWindowWidth()) {
+			ImGui::SetCursorPosX(hintX);
+			ImGui::AlignTextToFramePadding();
+			if (m_FocusPickArmed)
+				ImGui::TextColored(Theme::Accent, "%s", hint);
+			else
+				ImGui::TextDisabled("%s", hint);
+		}
 		else
-			ImGui::TextDisabled("%s", hint);
+			ImGui::NewLine();
 
 		ImGui::EndChild();
 		ImGui::PopStyleColor();
@@ -827,17 +847,18 @@ namespace Lucerna {
 		glfwGetFramebufferSize(m_Window, &framebufferW, &framebufferH);
 		m_FramebufferScale = windowW > 0 && framebufferW > 0 ? static_cast<float>(framebufferW) / windowW : 1.0f;
 		const float content = std::max(1.0f, contentX);
-		m_UiScale = std::max(1.0f, content / m_FramebufferScale);
+		const float user = std::clamp(m_Preferences.UiScale, Preferences::MIN_UI_SCALE, Preferences::MAX_UI_SCALE);
+		m_UiScale = std::max(1.0f, content / m_FramebufferScale) * user;
 		const int platform = glfwGetPlatform();
 		std::cout << "Window: " << (platform == GLFW_PLATFORM_WAYLAND ? "wayland" : platform == GLFW_PLATFORM_X11 ? "x11" : platform == GLFW_PLATFORM_WIN32 ? "win32" : "other")
 		          << (m_CustomTitleBar ? ", app title bar" : ", system title bar")
-		          << ", content scale " << content << ", framebuffer scale " << m_FramebufferScale
+		          << ", content scale " << content << ", framebuffer scale " << m_FramebufferScale << ", ui scale " << user
 		          << ", cursor theme " << (getenv("XCURSOR_THEME") ? getenv("XCURSOR_THEME") : "default")
 		          << " " << (getenv("XCURSOR_SIZE") ? getenv("XCURSOR_SIZE") : "") << std::endl;
 
 		ImGuiIO& io = ImGui::GetIO();
 		io.Fonts->Clear();
-		const Theme::Fonts fonts = Theme::LoadFonts(content);
+		const Theme::Fonts fonts = Theme::LoadFonts(content * user);
 		io.FontGlobalScale = 1.0f / m_FramebufferScale;
 		Theme::Apply(m_UiScale);
 		UI::Configure(fonts, m_UiScale);
@@ -847,17 +868,24 @@ namespace Lucerna {
 		Get().m_RescaleRequested = true;
 	}
 
-	// La texture dei font va rifatta, e il backend Vulkan di ImGui non sa sostituirla: lo si
-	// rifa' da capo. Succede solo quando la finestra passa a un monitor con un'altra scala.
+	// La texture dei font va rifatta (cambio di monitor o di UI scale). Si rifanno solo gli oggetti
+	// Vulkan del backend: ImGui_ImplVulkan_Shutdown distruggerebbe anche le finestre della
+	// piattaforma, compreso l'handle della finestra principale, e il backend GLFW al frame dopo lo
+	// userebbe nullo. I due descrittori vecchi (font e render) si liberano a mano: il backend non lo fa.
 	void Application::RebuildUiForScale() {
 		m_RescaleRequested = false;
 		vkDeviceWaitIdle(m_Vulkan.Device());
+		const VkDescriptorSet oldFont = reinterpret_cast<VkDescriptorSet>(ImGui::GetIO().Fonts->TexID);
 		ApplyUiScale();
-		ImGui_ImplVulkan_Shutdown();
-		ImGui_ImplVulkan_Init(&m_ImGuiVulkanInfo, VK_NULL_HANDLE);
+		if (oldFont != VK_NULL_HANDLE)
+			ImGui_ImplVulkan_RemoveTexture(oldFont);
+		if (m_DisplaySet != VK_NULL_HANDLE)
+			ImGui_ImplVulkan_RemoveTexture(m_DisplaySet);
+		m_DisplaySet = VK_NULL_HANDLE; // si rifa' col layout nuovo al prossimo disegno
+		ImGui_ImplVulkan_DestroyDeviceObjects();
+		ImGui_ImplVulkan_CreateDeviceObjects();
 		m_Vulkan.Immediate([](VkCommandBuffer cmd) { ImGui_ImplVulkan_CreateFontsTexture(cmd); });
 		ImGui_ImplVulkan_DestroyFontUploadObjects();
-		m_DisplaySet = VK_NULL_HANDLE; // il descrittore della render apparteneva al backend di prima
 	}
 
 	// A destra nella barra dei menu: il file aperto e, senza cornice, i tre pulsanti della finestra.

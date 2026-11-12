@@ -21,6 +21,9 @@ namespace Lucerna {
 		std::vector<std::string> RecentFiles;
 		// L'eseguibile di Blender per File > Open in Blender (ADR 0024); vuoto = lo cerca Lucerna
 		std::string BlenderPath;
+		// Come la Resolution Scale di Blender: ingrandisce font e misure della UI, sopra la scala del monitor
+		float UiScale = 1.0f;
+		static constexpr float MIN_UI_SCALE = 1.0f, MAX_UI_SCALE = 2.0f;
 		void AddRecent(const std::string& path); // in testa, senza doppioni, al massimo MAX_RECENT
 		static constexpr size_t MAX_RECENT = 10;
 
@@ -31,7 +34,7 @@ namespace Lucerna {
 
 	constexpr auto JsonFields(const Preferences*) {
 		return std::make_tuple(Field("vsync", &Preferences::Vsync), Field("systemTitleBar", &Preferences::SystemTitleBar), Field("recentFiles", &Preferences::RecentFiles),
-		                       Field("blenderPath", &Preferences::BlenderPath));
+		                       Field("blenderPath", &Preferences::BlenderPath), Field("uiScale", &Preferences::UiScale));
 	}
 }
 

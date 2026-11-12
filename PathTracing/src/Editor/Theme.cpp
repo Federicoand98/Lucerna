@@ -8,7 +8,7 @@ namespace Lucerna::Theme {
 
 	namespace {
 		constexpr float TEXT_SIZE = 13.0f;
-		constexpr float MONO_SIZE = 12.0f;
+		constexpr float MONO_SIZE = TEXT_SIZE; // a 12 i numeri del profiler e dell'HUD si leggevano a fatica
 
 		// Un font di testo con le icone Lucide fuse dentro, alla stessa altezza
 		ImFont* LoadWithIcons(const char* path, float size) {
