@@ -5,6 +5,7 @@
 
 #include "Core/Fields.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,9 @@ namespace Lucerna {
 		std::string BlenderPath;
 		// Come la Resolution Scale di Blender: ingrandisce font e misure della UI, sopra la scala del monitor
 		float UiScale = 1.0f;
+		// Le scorciatoie cambiate dall'utente, id dell'azione -> tasto ("" = nessuno): solo le
+		// differenze dai default, che stanno nel codice (ADR 0027)
+		std::map<std::string, std::string> Keymap;
 		static constexpr float MIN_UI_SCALE = 1.0f, MAX_UI_SCALE = 2.0f;
 		void AddRecent(const std::string& path); // in testa, senza doppioni, al massimo MAX_RECENT
 		static constexpr size_t MAX_RECENT = 10;
@@ -34,7 +38,8 @@ namespace Lucerna {
 
 	constexpr auto JsonFields(const Preferences*) {
 		return std::make_tuple(Field("vsync", &Preferences::Vsync), Field("systemTitleBar", &Preferences::SystemTitleBar), Field("recentFiles", &Preferences::RecentFiles),
-		                       Field("blenderPath", &Preferences::BlenderPath), Field("uiScale", &Preferences::UiScale));
+		                       Field("blenderPath", &Preferences::BlenderPath), Field("uiScale", &Preferences::UiScale),
+		                       Field("keymap", &Preferences::Keymap));
 	}
 }
 

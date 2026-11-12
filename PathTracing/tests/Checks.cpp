@@ -9,6 +9,7 @@
 #include "Serialization/SceneSerializer.h"
 #include "Editor/Document.h"
 #include "Editor/BlenderLink.h"
+#include "Editor/Keymap.h"
 #include "Core/Paths.h"
 #include "Core/Parallel.h"
 #include "Core/Profiler.h"
@@ -363,6 +364,33 @@ int main() {
 	// Open di un OBJ: la scena diventa il modello, con i suoi asset e un materiale di default
 	CHECK(OpenFile("res/models/pawn.obj", placed, assets) && placed.Meshes().size() == 1 && assets.Meshes().size() == 1);
 	CHECK(assets.Materials().size() == 1 && placed.Meshes()[0].Material == assets.Materials()[0].Id);
+
+	// Le scorciatoie (ADR 0027): un tasto si scrive e si rilegge uguale, e due azioni dello
+	// stesso contesto non hanno mai lo stesso tasto
+	{
+		CHECK(Keymap::Parse(Keymap::Serialize(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) == (ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S));
+		CHECK(Keymap::Serialize(ImGuiMod_Ctrl | ImGuiKey_Comma) == "Ctrl+Comma" && Keymap::Format(ImGuiMod_Ctrl | ImGuiKey_Comma) == "Ctrl+,");
+		CHECK(Keymap::Format(ImGuiKey_Escape) == "Esc" && Keymap::Format(ImGuiKey_None).empty());
+		CHECK(Keymap::Parse("Hyper+S") == ImGuiKey_None && Keymap::Parse("Nonsense") == ImGuiKey_None && Keymap::Parse("") == ImGuiKey_None);
+		Keymap keys;
+		keys.Add({ "a", "G", "A", nullptr, KeyContext::Global, ImGuiKey_A, [] {} });
+		keys.Add({ "b", "G", "B", nullptr, KeyContext::Global, ImGuiKey_B, [] {} });
+		keys.Add({ "p", "P", "P", nullptr, KeyContext::Profiler, ImGuiKey_A, [] {} }); // altro contesto: A resta anche qui
+		keys.Apply({});
+		CHECK(keys.Key("a") == ImGuiKey_A && keys.Key("p") == ImGuiKey_A && keys.Overrides().empty());
+		// assegnare il tasto di un'altra azione glielo toglie, solo nello stesso contesto
+		CHECK(keys.Assign("b", ImGuiKey_A) == "a" && keys.Key("a") == ImGuiKey_None && keys.Key("p") == ImGuiKey_A);
+		const std::map<std::string, std::string> saved = keys.Overrides();
+		CHECK(saved.size() == 2 && saved.at("a").empty() && saved.at("b") == "A");
+		// rilette, le differenze vincono sui default che scontrano
+		keys.ResetAll();
+		keys.Apply(saved);
+		CHECK(keys.Key("a") == ImGuiKey_None && keys.Key("b") == ImGuiKey_A);
+		keys.Apply({ { "b", "A" } }); // a non toccata: il suo default A e' gia' preso
+		CHECK(keys.Key("a") == ImGuiKey_None && keys.Key("b") == ImGuiKey_A);
+		keys.Apply({ { "gone", "Ctrl+Z" } }); // un'azione che non esiste piu' si ignora
+		CHECK(keys.Key("a") == ImGuiKey_A && keys.Key("b") == ImGuiKey_B);
+	}
 
 	// Scene integrate (issue #28): i file di res/scenes/builtin, per numero o per nome
 	const std::vector<BuiltinScene> builtin = ListBuiltinScenes("res/scenes/builtin");

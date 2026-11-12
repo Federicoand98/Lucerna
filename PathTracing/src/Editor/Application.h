@@ -15,6 +15,8 @@
 #include "Serialization/BuiltinScenes.h"
 #include "Editor/Document.h"
 #include "Editor/BlenderLink.h"
+#include "Editor/Keymap.h"
+#include <map>
 #include <functional>
 #include <memory>
 #include <unordered_map>
@@ -58,6 +60,12 @@ namespace Lucerna {
 		// La rotazione di una luce orienta lo spot.
 		bool SupportsRotation() const { return Type == SelectionType::Quad || Type == SelectionType::Mesh || Type == SelectionType::Light; }
 	};
+
+	// Le viste di debug del renderer (View > Debug view), nell'ordine di ViewSettings::AOVView
+	inline const char* const AOV_NAMES[] = { "Beauty", "Albedo", "Normal", "Depth", "History" };
+
+	// Cosa chiede una scorciatoia del Profiler che ha bisogno della vista: la esegue il pannello
+	enum class ProfilerRequest { None, ToggleLive, GoLive, Zoom2s, Zoom10s, Zoom1min, ZoomAll };
 
 	struct ProfilerViewStats; // ProfilerPanel.cpp
 	struct ProfilerRange;
@@ -157,7 +165,16 @@ namespace Lucerna {
 		void DrawSavePrompt();
 		void ShowOpenDialog();
 		void DrawMainMenu();
+		// ---- azioni e scorciatoie (Actions.cpp, ADR 0027)
+		void RegisterActions();
 		void HandleShortcuts();
+		bool MenuAction(const char* id); // la voce di menu di un'azione, col suo tasto
+		void DrawAddItems();
+		void DuplicateSelection();
+		void DrawKeymapSection();
+		void ActionTooltip(const char* id, const char* text = nullptr); // sull'ultimo widget: cosa fa e il suo tasto
+		void OpenPreferences(int section);
+		CameraKeys NavigationKeys() const;
 		void UpdateWindowTitle();
 		// ---- finestra (ADR 0021): la barra del titolo disegnata dall'app e la scala HiDPI
 		void ApplyUiScale();        // font, stile e scala del framebuffer alla scala del monitor attuale
@@ -198,10 +215,19 @@ namespace Lucerna {
 		std::shared_ptr<ProfilerViewStats> m_ProfilerStats;
 		bool m_ProfilerStatsDirty = true;
 		int m_ProfilerTab = 0; // 0 Frame, 1 Loading, 2 Memory
+		ProfilerRequest m_ProfilerRequest = ProfilerRequest::None;
 		std::unordered_set<std::string> m_ProfilerCollapsed; // le righe chiuse della tabella CPU, per percorso
 		// Il riferimento A/B: la media di ogni riga quando lo si e' salvato; frame 0 = nessuno
 		std::unordered_map<std::string, float> m_ProfilerReference;
 		float m_ProfilerReferenceFrameMs = 0.0f;
+		// Le scorciatoie (ADR 0027): il registro, l'azione che aspetta un tasto nelle Preferences,
+		// le azioni che hanno perso il loro tasto (col tasto perso), il filtro della tabella
+		Keymap m_Keymap;
+		std::string m_CapturingAction;
+		std::map<std::string, std::string> m_KeymapLost;
+		char m_KeymapFilter[64] = {};
+		bool m_OpenAddPopup = false;
+		int m_PreferencesSection = 0; // 0 Interface, 1 System, 2 Keymap
 		bool m_HudClicked = false; // un clic sull'HUD apre il profiler e non fa picking
 		bool m_ResetLayout = false;
 		// Il materiale aperto nella sezione Material: quello cliccato nel pannello, o quello

@@ -25,11 +25,16 @@ struct CameraUBO {
 
 namespace Lucerna {
 
+	// I tasti di navigazione tenuti premuti in questo frame: li sceglie la mappa dei tasti (ADR 0027)
+	struct CameraKeys {
+		bool Forward = false, Back = false, Left = false, Right = false, Up = false, Down = false;
+	};
+
 	class Camera {
 	public:
 		Camera(float verticalFOV, float nearClip, float farClip);
 
-		bool OnUpdate(float ts);
+		bool OnUpdate(float ts, const CameraKeys& keys);
 		void OnResize(uint32_t width, uint32_t height);
 		void RecalculateProjection();
 		void ResetPosition();

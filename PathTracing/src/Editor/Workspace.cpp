@@ -26,8 +26,6 @@ namespace Lucerna {
 		constexpr const char* PROPERTIES = "Properties";
 		constexpr const char* PROFILER = "Profiler";
 
-		const char* const AOV_NAMES[] = { "Beauty", "Albedo", "Normal", "Depth", "History" };
-
 		// Un riquadro dell'HUD sopra la render, in alto a sinistra (dir = 1) o a destra (dir = -1).
 		// Ritorna il rettangolo, per chi lo rende cliccabile.
 		ImRect HudLabel(ImDrawList* list, ImVec2 anchor, float dir, const char* text, ImU32 color, ImU32 background = 0) {
@@ -141,13 +139,11 @@ namespace Lucerna {
 			return;
 		ImGui::TextDisabled("Undo is not available yet");
 		ImGui::Separator();
-		if (ImGui::MenuItem(ICON_DELETE " Delete", "Del", false, CanDeleteSelection()))
-			m_DeleteRequested = true;
-		if (ImGui::MenuItem(ICON_CLOSE " Deselect", "Esc", false, m_Selection.IsValid()))
-			m_Selection = {};
+		MenuAction("edit.duplicate");
+		MenuAction("edit.delete");
+		MenuAction("edit.deselect");
 		ImGui::Separator();
-		if (ImGui::MenuItem(ICON_SETTINGS " Preferences..."))
-			m_ShowPreferences = true;
+		MenuAction("edit.preferences");
 		ImGui::EndMenu();
 	}
 
@@ -155,58 +151,90 @@ namespace Lucerna {
 		if (!ImGui::BeginMenu("View"))
 			return;
 		if (ImGui::BeginMenu(ICON_VIEW " Debug view")) {
-			for (int i = 0; i < static_cast<int>(std::size(AOV_NAMES)); i++)
-				if (ImGui::MenuItem(AOV_NAMES[i], nullptr, m_Renderer.View.AOVView == i))
-					m_Renderer.View.AOVView = i;
+			for (const char* id : { "view.aov_beauty", "view.aov_albedo", "view.aov_normal", "view.aov_depth", "view.aov_history" })
+				MenuAction(id);
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu(ICON_MOVE " Gizmo")) {
-			if (ImGui::MenuItem("Move", "G", m_GizmoOperation == ImGuizmo::TRANSLATE)) m_GizmoOperation = ImGuizmo::TRANSLATE;
-			if (ImGui::MenuItem("Rotate", "R", m_GizmoOperation == ImGuizmo::ROTATE)) m_GizmoOperation = ImGuizmo::ROTATE;
-			if (ImGui::MenuItem("Scale", "S", m_GizmoOperation == ImGuizmo::SCALE)) m_GizmoOperation = ImGuizmo::SCALE;
+			for (const char* id : { "view.move", "view.rotate", "view.scale" })
+				MenuAction(id);
 			ImGui::EndMenu();
 		}
 		ImGui::Separator();
-		ImGui::MenuItem(OUTLINER, nullptr, &m_ShowOutliner);
-		ImGui::MenuItem(MATERIALS, nullptr, &m_ShowMaterials);
-		ImGui::MenuItem(PROPERTIES, nullptr, &m_ShowProperties);
-		ImGui::MenuItem(ICON_PROFILER " Profiler", nullptr, &m_ShowProfiler);
-		ImGui::MenuItem("Viewport readouts", nullptr, &m_ShowHud);
-		ImGui::MenuItem(ICON_DEBUG " Developer", nullptr, &m_ShowDeveloper);
+		for (const char* id : { "view.outliner", "view.materials", "view.properties", "view.profiler", "view.hud", "view.developer" })
+			MenuAction(id);
 		ImGui::Separator();
-		if (ImGui::MenuItem(ICON_LAYOUT " Reset layout"))
-			m_ResetLayout = true;
+		MenuAction("view.reset_layout");
 		ImGui::EndMenu();
 	}
 
+	// Le scorciatoie assegnate, dal registro: si cambiano in Edit > Preferences > Keymap
 	void Application::DrawHelpMenu() {
 		if (!ImGui::BeginMenu("Help"))
 			return;
-		ImGui::TextDisabled(ICON_KEYBOARD " Navigation");
-		const std::pair<const char*, const char*> keys[] = {
-			{ "Look and fly", "right mouse + WASD" }, { "Select", "left click" }, { "Move / rotate / scale", "G  R  S" },
-			{ "Delete", "Del" }, { "Deselect", "Esc" }, { "Save", "Ctrl+S" }, { "Open", "Ctrl+O" } };
+		ImGui::TextDisabled(ICON_KEYBOARD " Keyboard shortcuts");
 		if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_SizingFixedFit)) {
-			for (const auto& [action, key] : keys) {
+			auto row = [](const std::string& action, const std::string& key) {
 				ImGui::TableNextColumn();
-				ImGui::TextUnformatted(action);
+				ImGui::TextUnformatted(action.c_str());
 				ImGui::TableNextColumn();
 				ImGui::PushFont(UI::MonoFont());
-				ImGui::TextDisabled("%s", key);
+				ImGui::TextDisabled("%s", key.c_str());
 				ImGui::PopFont();
+			};
+			std::string fly = "right mouse +";
+			for (const char* id : { "nav.forward", "nav.left", "nav.back", "nav.right", "nav.up", "nav.down" })
+				fly += " " + Keymap::Format(m_Keymap.Key(id));
+			row("Look and fly", fly);
+			row("Select", "left click");
+			for (const Action& action : m_Keymap.Actions()) {
+				const std::string key = Keymap::Format(m_Keymap.Key(action.Id));
+				if (!key.empty() && action.Context == KeyContext::Global)
+					row(action.Name, key);
 			}
 			ImGui::EndTable();
 		}
+		if (ImGui::MenuItem(ICON_SETTINGS " Customize..."))
+			OpenPreferences(2);
 		ImGui::EndMenu();
 	}
 
+	void Application::OpenPreferences(int section) {
+		m_ShowPreferences = true;
+		m_PreferencesSection = section;
+	}
+
+	// Le sezioni a sinistra, come in Blender: Interface, System, Keymap (ADR 0027)
 	void Application::DrawPreferencesWindow() {
-		ImGui::SetNextWindowSize(ImVec2(360.0f * UI::Scale(), 0.0f), ImGuiCond_Appearing);
-		if (ImGui::Begin(ICON_SETTINGS " Preferences###Preferences", &m_ShowPreferences, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
-			if (UI::Checkbox("Vsync", &m_Vsync)) {
-				m_Vulkan.SetVsync(m_Vsync);
-				m_Preferences.Vsync = m_Vsync;
+		const float s = UI::Scale();
+		ImGui::SetNextWindowSize(ImVec2(640.0f * s, 480.0f * s), ImGuiCond_FirstUseEver);
+		if (!ImGui::Begin(ICON_SETTINGS " Preferences###Preferences", &m_ShowPreferences, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+			ImGui::End();
+			return;
+		}
+		if (!m_ShowPreferences)
+			m_CapturingAction.clear();
+
+		const char* sections[] = { "Interface", "System", "Keymap" };
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, Theme::Rail);
+		ImGui::BeginChild("Sections", ImVec2(120.0f * s, 0.0f), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
+		for (int i = 0; i < 3; i++)
+			if (ImGui::Selectable(sections[i], m_PreferencesSection == i)) {
+				m_PreferencesSection = i;
+				m_CapturingAction.clear();
+			}
+		ImGui::EndChild();
+		ImGui::PopStyleColor();
+		ImGui::SameLine();
+		ImGui::BeginChild("Section", ImVec2(0.0f, 0.0f));
+
+		if (m_PreferencesSection == 0) {
+			// font e stile si rifanno solo quando si lascia lo slider: rifarli a ogni passo lo
+			// sposterebbe sotto il mouse
+			UI::SliderFloat("UI scale", &m_Preferences.UiScale, Preferences::MIN_UI_SCALE, Preferences::MAX_UI_SCALE, "%.2f");
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
 				m_Preferences.Save();
+				m_RescaleRequested = true;
 			}
 			// la cornice si sceglie quando si crea la finestra: vale al prossimo avvio (ADR 0021)
 			if (UI::Checkbox("System title bar", &m_Preferences.SystemTitleBar))
@@ -215,12 +243,12 @@ namespace Lucerna {
 				UI::Label("");
 				ImGui::TextDisabled("applies on the next start");
 			}
-			// font e stile si rifanno solo quando si lascia lo slider: rifarli a ogni passo lo
-			// sposterebbe sotto il mouse
-			UI::SliderFloat("UI scale", &m_Preferences.UiScale, Preferences::MIN_UI_SCALE, Preferences::MAX_UI_SCALE, "%.2f");
-			if (ImGui::IsItemDeactivatedAfterEdit()) {
+		}
+		else if (m_PreferencesSection == 1) {
+			if (UI::Checkbox("Vsync", &m_Vsync)) {
+				m_Vulkan.SetVsync(m_Vsync);
+				m_Preferences.Vsync = m_Vsync;
 				m_Preferences.Save();
-				m_RescaleRequested = true;
 			}
 			UI::Label("Device");
 			ImGui::TextDisabled("%s", m_Vulkan.DeviceName());
@@ -254,6 +282,10 @@ namespace Lucerna {
 				ImGui::PopTextWrapPos();
 			}
 		}
+		else
+			DrawKeymapSection();
+
+		ImGui::EndChild();
 		ImGui::End();
 	}
 
@@ -430,12 +462,15 @@ namespace Lucerna {
 		                  ImGuiWindowFlags_AlwaysUseWindowPadding | ImGuiWindowFlags_NoScrollbar);
 
 		const ImGuizmo::OPERATION effective = EffectiveGizmoOperation();
-		if (UI::Pill(ICON_MOVE " Move", effective == ImGuizmo::TRANSLATE)) m_GizmoOperation = ImGuizmo::TRANSLATE;
+		if (UI::Pill(ICON_MOVE " Move", effective == ImGuizmo::TRANSLATE)) m_Keymap.Run("view.move");
+		ActionTooltip("view.move");
 		ImGui::SameLine();
 		if (UI::Pill(ICON_ROTATE " Rotate", effective == ImGuizmo::ROTATE, !m_Selection.IsValid() || m_Selection.SupportsRotation()))
-			m_GizmoOperation = ImGuizmo::ROTATE;
+			m_Keymap.Run("view.rotate");
+		ActionTooltip("view.rotate");
 		ImGui::SameLine();
-		if (UI::Pill(ICON_SCALE " Scale", effective == ImGuizmo::SCALE)) m_GizmoOperation = ImGuizmo::SCALE;
+		if (UI::Pill(ICON_SCALE " Scale", effective == ImGuizmo::SCALE)) m_Keymap.Run("view.scale");
+		ActionTooltip("view.scale");
 
 		ImGui::SameLine(0.0f, 14.0f * s);
 		const std::string view = std::string(ICON_VIEW " View: ") + AOV_NAMES[std::clamp(m_Renderer.View.AOVView, 0, 4)];
@@ -448,14 +483,19 @@ namespace Lucerna {
 		}
 		ImGui::SameLine();
 		if (UI::Pill(ICON_DENOISE " Denoised", m_Renderer.Settings.Denoise))
-			m_Renderer.Settings.Denoise = !m_Renderer.Settings.Denoise;
+			m_Keymap.Run("viewport.denoise");
+		ActionTooltip("viewport.denoise");
 		ImGui::SameLine();
 		if (UI::Pill(m_Renderer.View.PathTracing ? ICON_PAUSE "##pause" : ICON_PLAY "##pause", !m_Renderer.View.PathTracing))
-			m_Renderer.View.PathTracing = !m_Renderer.View.PathTracing;
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip(m_Renderer.View.PathTracing ? "Pause accumulation" : "Resume accumulation");
+			m_Keymap.Run("viewport.pause");
+		ActionTooltip("viewport.pause", m_Renderer.View.PathTracing ? "Pause accumulation" : "Resume accumulation");
 
-		const char* hint = m_FocusPickArmed ? "click a point to focus" : "right mouse + WASD  G R S  Del";
+		std::string keys = "right mouse +";
+		for (const char* id : { "nav.forward", "nav.left", "nav.back", "nav.right" })
+			keys += (id[4] == 'f' ? " " : "") + Keymap::Format(m_Keymap.Key(id));
+		for (const char* id : { "view.move", "view.rotate", "view.scale", "edit.delete" })
+			keys += (id[5] == 'm' ? "  " : " ") + Keymap::Format(m_Keymap.Key(id));
+		const char* hint = m_FocusPickArmed ? "click a point to focus" : keys.c_str();
 		// a destra dei pulsanti; se non ci sta (finestra stretta, UI scale alta) l'aiuto si toglie,
 		// l'avviso del focus no
 		ImGui::SameLine();
@@ -690,17 +730,16 @@ namespace Lucerna {
 	// primari, quindi si riconsegna con SetCamera e l'accumulo riparte.
 	void Application::DrawCameraSection() {
 		if (UI::Section("View")) {
-			if (UI::Checkbox("Lock to camera", &m_Renderer.View.LockViewToCamera) && m_Renderer.View.LockViewToCamera)
-				m_Camera.SetView(m_Scene.Camera().Position, m_Scene.Camera().Direction); // torna all'inquadratura
+			bool lock = m_Renderer.View.LockViewToCamera;
+			if (UI::Checkbox("Lock to camera", &lock))
+				m_Keymap.Run("camera.lock");
+			ActionTooltip("camera.lock");
 			ImGui::TextDisabled(m_Renderer.View.LockViewToCamera ? "navigating moves the scene camera"
 			                                                      : "free view: the scene camera stays put");
 			ImGui::BeginDisabled(m_Renderer.View.LockViewToCamera);
-			if (UI::Pill("Align camera to view")) { // cambia l'inquadratura salvata: e' una modifica
-				SceneCamera camera = m_Scene.Camera();
-				camera.Position = m_Camera.GetPosition();
-				camera.Direction = m_Camera.GetDirection();
-				m_Scene.SetCamera(camera);
-			}
+			if (UI::Pill("Align camera to view"))
+				m_Keymap.Run("camera.align");
+			ActionTooltip("camera.align");
 			ImGui::EndDisabled();
 		}
 
@@ -709,11 +748,10 @@ namespace Lucerna {
 		if (UI::Section("Lens")) {
 			changed |= UI::SliderFloat("Vertical FOV", &camera.VerticalFOV, 30.0f, 140.0f, "%.1f deg");
 			if (UI::Pill(ICON_RESET " Reset camera")) {
-				const SceneCamera defaults;
-				camera.Position = defaults.Position;
-				camera.Direction = defaults.Direction;
-				changed = true;
+				m_Keymap.Run("camera.reset");
+				camera = m_Scene.Camera();
 			}
+			ActionTooltip("camera.reset");
 		}
 		if (UI::Section("Depth of field")) {
 			if (UI::SliderFloat("Aperture", &camera.Aperture, 0.0f, 0.5f, "%.3f")) {
@@ -729,6 +767,7 @@ namespace Lucerna {
 			// il prossimo click nella viewport mette a fuoco esattamente li'
 			if (UI::Pill(m_FocusPickArmed ? "Cancel pick" : "Pick focus in the viewport", m_FocusPickArmed))
 				m_FocusPickArmed = !m_FocusPickArmed;
+			ActionTooltip("camera.pick_focus");
 			ImGui::EndDisabled();
 			if (dofOff)
 				ImGui::TextDisabled("aperture 0: no depth of field (pinhole)");
@@ -747,6 +786,7 @@ namespace Lucerna {
 			if (i > 0) ImGui::SameLine();
 			if (UI::Pill(presets[i].first, settings == presets[i].second()))
 				settings = presets[i].second();
+			ActionTooltip(i == 0 ? "render.draft" : i == 1 ? "render.preview" : "render.final");
 		}
 
 		if (UI::Section("Integrator")) {
@@ -775,10 +815,12 @@ namespace Lucerna {
 				settings.RenderScale = values[scale];
 			UI::Label("");
 			if (UI::Pill(m_Renderer.View.PathTracing ? ICON_PAUSE " Pause" : ICON_PLAY " Resume", !m_Renderer.View.PathTracing))
-				m_Renderer.View.PathTracing = !m_Renderer.View.PathTracing;
+				m_Keymap.Run("viewport.pause");
+			ActionTooltip("viewport.pause");
 			ImGui::SameLine();
 			if (UI::Pill(ICON_RESET " Reset"))
-				m_Renderer.RestartAccumulation();
+				m_Keymap.Run("viewport.reset");
+			ActionTooltip("viewport.reset");
 		}
 
 		// Il denoiser filtra la vista, non tocca l'accumulo (ADR 0001)

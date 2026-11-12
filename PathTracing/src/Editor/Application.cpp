@@ -76,6 +76,7 @@ namespace Lucerna {
 		s_Instance = this;
 		// Prima delle scene: aprire un file aggiorna i file recenti, che stanno nelle preferenze
 		m_Preferences = Preferences::Load();
+		RegisterActions();
 
 		// Le scene integrate sono file (issue #28). PT_SCENE=<numero o nome> sceglie quella di
 		// partenza; senza, Setup 2.
@@ -266,7 +267,7 @@ namespace Lucerna {
 			// abbassare la risoluzione (render scale).
 			{
 				PROFILE_SCOPE("Camera and live link");
-				bool cameraMoved = m_Camera.OnUpdate(m_DeltaTime);
+				bool cameraMoved = m_Camera.OnUpdate(m_DeltaTime, NavigationKeys());
 				SyncCameras(cameraMoved);
 				m_Renderer.SetInteracting(cameraMoved);
 
@@ -283,7 +284,6 @@ namespace Lucerna {
 			// Start the Dear ImGui frame
 			ImGui_ImplVulkan_NewFrame();
 			ImGui_ImplGlfw_NewFrame();
-
 			ImGui::NewFrame();
 			ImGuizmo::BeginFrame();
 
@@ -557,13 +557,10 @@ namespace Lucerna {
 		ImGui::TextColored(Theme::Accent, "Lucerna");
 		ImGui::PopFont();
 		if (ImGui::BeginMenu("File")) {
-			if (ImGui::MenuItem(ICON_NEW " New", "Ctrl+N"))
-				WhenSaved([this] { NewDocument(); });
-			if (ImGui::MenuItem(ICON_OPEN " Open...", "Ctrl+O"))
-				ShowOpenDialog();
+			MenuAction("file.new");
+			MenuAction("file.open");
 			// Blender parte collegato: il .blend si apre li', e la scena arriva qui (ADR 0024)
-			if (ImGui::MenuItem(ICON_EXTERNAL " Open in Blender..."))
-				OpenInBlender();
+			MenuAction("file.open_blender");
 			if (ImGui::BeginMenu("Open Recent")) {
 				// un file che non c'e' piu' sparisce dall'elenco
 				std::vector<std::string>& recent = m_Preferences.RecentFiles;
@@ -586,18 +583,13 @@ namespace Lucerna {
 				ImGui::EndMenu();
 			}
 			ImGui::Separator();
-			if (ImGui::MenuItem(ICON_SAVE " Save", "Ctrl+S"))
-				SaveDocument();
-			if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
-				SaveDocumentAs();
+			MenuAction("file.save");
+			MenuAction("file.save_as");
 			ImGui::Separator();
-			// un file importato si riapre quando cambia sul disco (un export di un altro tool)
-			if (ImGui::MenuItem("Reload when the file changes", nullptr, &m_LiveLink, !m_WatchPath.empty())) {}
-			if (ImGui::MenuItem(ICON_SCREENSHOT " Save screenshot"))
-				m_ScreenshotRequested = true;
+			MenuAction("file.live_link");
+			MenuAction("file.screenshot");
 			ImGui::Separator();
-			if (ImGui::MenuItem("Quit", "Ctrl+Q"))
-				WhenSaved([this] { m_IsRunning = false; });
+			MenuAction("file.quit");
 			ImGui::EndMenu();
 		}
 		DrawEditMenu();
@@ -607,21 +599,6 @@ namespace Lucerna {
 
 		DrawWindowControls();
 		ImGui::EndMainMenuBar();
-	}
-
-	// Le scorciatoie del menu File. Non mentre si scrive in un campo di testo.
-	void Application::HandleShortcuts() {
-		const ImGuiIO& io = ImGui::GetIO();
-		if (!io.KeyCtrl || io.WantTextInput)
-			return;
-		if (ImGui::IsKeyPressed(ImGuiKey_N, false))
-			WhenSaved([this] { NewDocument(); });
-		else if (ImGui::IsKeyPressed(ImGuiKey_O, false))
-			ShowOpenDialog();
-		else if (ImGui::IsKeyPressed(ImGuiKey_S, false))
-			io.KeyShift ? SaveDocumentAs() : SaveDocument();
-		else if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
-			WhenSaved([this] { m_IsRunning = false; });
 	}
 
 	// "Lucerna - sponza.json*": il file aperto, e un asterisco se ci sono modifiche non salvate
@@ -663,7 +640,7 @@ namespace Lucerna {
 		else
 			m_Blender.Launch(blender, m_BlenderError);
 		if (!m_BlenderError.empty())
-			m_ShowPreferences = true;
+			OpenPreferences(1); // System: il campo di Blender
 	}
 
 	// Un export nuovo di Blender diventa il documento. Il primo di un .blend prende la sua camera;
@@ -723,8 +700,7 @@ namespace Lucerna {
 		if (ImGui::BeginPopup("##blender")) {
 			if (state == State::Linked)
 				ImGui::TextDisabled("%s \xc2\xb7 export %.0f ms", m_Blender.Blend().c_str(), m_Blender.LastExportMs());
-			if (ImGui::MenuItem(ICON_REFRESH " Sync now", nullptr, false, m_Blender.CanSync()))
-				m_Blender.RequestSync();
+			MenuAction("file.blender_sync");
 			if (ImGui::MenuItem(ICON_FOLDER " Show export folder", nullptr, false, !m_Blender.Gltf().empty()))
 				BlenderLink::ShowInFileManager(std::filesystem::path(m_Blender.Gltf()).parent_path());
 			if (ImGui::MenuItem(ICON_UNLINK " Disconnect"))
@@ -893,12 +869,18 @@ namespace Lucerna {
 		ImGui::PopItemWidth();
 
 		ImGui::Spacing();
-		if (ImGui::Button("Deselect (ESC)"))
-			m_Selection = {};
+		if (ImGui::Button(ICON_RESTORE " Duplicate"))
+			m_Keymap.Run("edit.duplicate");
+		ActionTooltip("edit.duplicate");
+		ImGui::SameLine();
+		if (ImGui::Button(ICON_CLOSE " Deselect"))
+			m_Keymap.Run("edit.deselect");
+		ActionTooltip("edit.deselect");
 
 		ImGui::SameLine();
-		if (ImGui::Button("Delete (Del)"))
-			m_DeleteRequested = true;
+		if (ImGui::Button(ICON_DELETE " Delete"))
+			m_Keymap.Run("edit.delete");
+		ActionTooltip("edit.delete");
 	}
 
 	// Un DragFloat sull'indice del materiale non dice niente su cosa si sta scegliendo:
@@ -993,73 +975,11 @@ namespace Lucerna {
 		return m_NewObjectMaterial;
 	}
 
-	// Il menu Add: gli oggetti nascono davanti alla camera, col materiale aperto nelle proprieta'
+	// Il menu Add: le stesse voci del menu sotto il mouse (Shift+A), dal registro delle azioni
 	void Application::DrawAddMenu() {
 		if (!ImGui::BeginMenu("Add"))
 			return;
-		const glm::vec3 spawn = SpawnPosition();
-
-		if (ImGui::MenuItem(ICON_SPHERE " Sphere")) {
-			const ObjectId material = EnsureMaterialExists();
-
-			Sphere sphere;
-			sphere.Position = glm::vec4(spawn, 0.5f); // la w e' il raggio
-			sphere.Material = material;
-			m_Selection = Select(SelectionType::Sphere, m_Scene.AddSphere(sphere));
-			m_GizmoOperation = ImGuizmo::TRANSLATE;
-		}
-
-		if (ImGui::MenuItem(ICON_BOX " Box")) {
-			const ObjectId material = EnsureMaterialExists();
-
-			// CreateBox appende i suoi 6 quad in coda, quindi i Box::index gia' esistenti
-			// restano validi e in ordine crescente, come si aspetta il loop dei Cubes
-			// nello shader (che li scorre in parallelo ai quad).
-			m_Scene.CreateBox(spawn - glm::vec3(0.5f), spawn + glm::vec3(0.5f), material);
-
-			m_Selection = Select(SelectionType::Box, (int)m_Scene.Boxes().size() - 1);
-			m_GizmoOperation = ImGuizmo::TRANSLATE;
-		}
-
-		if (ImGui::MenuItem(ICON_QUAD " Quad")) {
-			const ObjectId material = EnsureMaterialExists();
-
-			Quad quad;
-			quad.PositionLLC = glm::vec4(spawn - glm::vec3(0.5f, 0.5f, 0.0f), 0.0f);
-			quad.U = { 1.0f, 0.0f, 0.0f, 0.0f };
-			quad.V = { 0.0f, 1.0f, 0.0f, 0.0f };
-			quad.Width = 1.0f;
-			quad.Height = 1.0f;
-			quad.Material = material;
-			m_Selection = Select(SelectionType::Quad, m_Scene.AddQuad(quad));
-			m_GizmoOperation = ImGuizmo::TRANSLATE;
-		}
-
-		// luci punto e spot (ADR 0009): lo spot nasce rivolto in basso
-		for (int spot = 0; spot < 2; spot++) {
-			if (ImGui::MenuItem(spot ? ICON_SPOT_LIGHT " Spot light" : ICON_POINT_LIGHT " Point light")) {
-				PunctualLight light;
-				light.Spot = spot == 1;
-				light.Position = spawn;
-				m_Selection = Select(SelectionType::Light, m_Scene.AddLight(light, spot ? "Spot light" : "Point light"));
-				m_GizmoOperation = ImGuizmo::TRANSLATE;
-			}
-		}
-
-		// Add (issue #27): le mesh e le luci di un file, davanti alla camera. Lo stesso file
-		// aggiunto due volte si carica una volta sola: le istanze dividono la geometria.
-		if (ImGui::MenuItem(ICON_MESH " Model...")) {
-			const auto selection = pfd::open_file("Add model", "models", FileFilters()).result();
-			if (!selection.empty()) {
-				const ObjectId material = EnsureMaterialExists();
-				const int mesh = AddFile(selection[0], m_Scene, m_Assets, glm::translate(glm::mat4(1.0f), spawn), material);
-				if (mesh >= 0) {
-					m_Selection = Select(SelectionType::Mesh, mesh);
-					m_GizmoOperation = ImGuizmo::TRANSLATE;
-				}
-			}
-		}
-
+		DrawAddItems();
 		ImGui::EndMenu();
 	}
 
@@ -1777,26 +1697,7 @@ namespace Lucerna {
 
 	void Application::UpdateSelection() {
 		ImGuiIO& io = ImGui::GetIO();
-
-
-
-
-
-		// Le scorciatoie non devono agire mentre si scrive in un widget o si naviga con
-		// la camera (tasto destro + WASD). Il test giusto e' WantTextInput: con
-		// NavEnableKeyboard attivo, WantCaptureKeyboard resta sempre vero e bloccherebbe
-		// ogni scorciatoia.
-		// con la modale di conferma aperta, Escape deve chiuderla e non deselezionare,
-		// e Canc non deve riaprirla: le scorciatoie restano sospese
-		if (!io.WantTextInput && !io.KeyCtrl && !m_ShowDeletePopup && !Input::IsMouseButtonDown(MouseButton::Right)) {
-			if (ImGui::IsKeyPressed(ImGuiKey_G)) m_GizmoOperation = ImGuizmo::TRANSLATE;
-			if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoOperation = ImGuizmo::ROTATE;
-			if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoOperation = ImGuizmo::SCALE;
-			if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !(m_ProfilerFocused && !m_ProfilerLive)) m_Selection = {};
-
-			if (ImGui::IsKeyPressed(ImGuiKey_Delete) && CanDeleteSelection())
-				m_DeleteRequested = true;
-		}
+		// G/R/S, Canc ed Esc sono azioni del registro (Actions.cpp, ADR 0027)
 
 		// il gizmo ha la precedenza sul picking: trascinarlo non deve deselezionare.
 		// In modalita' fuoco pero' si clicca per mettere a fuoco, anche sopra il gizmo.

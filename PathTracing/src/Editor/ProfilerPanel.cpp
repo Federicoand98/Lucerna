@@ -833,8 +833,37 @@ namespace Lucerna {
 			m_ProfilerPinned = -1;
 			m_ProfilerStatsDirty = true;
 		};
-		if (!m_ProfilerLive && m_ProfilerFocused && ImGui::IsKeyPressed(ImGuiKey_Escape))
+		auto toggleLive = [&] {
+			if (m_ProfilerLive) {
+				m_ProfilerLive = false;
+				m_ProfilerEnd = static_cast<double>(range.End);
+			}
+			else
+				goLive();
+		};
+		// i preset dello zoom, in tempo: contano all'indietro dalla fine della vista
+		const double zoomPresets[] = { 2000.0, 10000.0, 60000.0, 0.0 };
+		auto zoom = [&](int preset) {
+			double frames = static_cast<double>(Profiler::MaxFrames), ms = 0.0;
+			if (zoomPresets[preset] > 0.0)
+				for (uint64_t f = range.End; f > range.First; f--) {
+					ms += history[f - 1 - range.First].FrameMs;
+					if (ms >= zoomPresets[preset]) {
+						frames = static_cast<double>(range.End - f + 1);
+						break;
+					}
+				}
+			m_ProfilerSpan = std::max(frames, MIN_SPAN);
+			m_ProfilerStatsDirty = true;
+		};
+		// le scorciatoie del pannello che hanno bisogno della vista (Actions.cpp)
+		const ProfilerRequest request = std::exchange(m_ProfilerRequest, ProfilerRequest::None);
+		if (request == ProfilerRequest::ToggleLive)
+			toggleLive();
+		else if (request == ProfilerRequest::GoLive)
 			goLive();
+		else if (request >= ProfilerRequest::Zoom2s)
+			zoom(static_cast<int>(request) - static_cast<int>(ProfilerRequest::Zoom2s));
 
 		// ---- toolbar: le tab, e per Frame la vista
 		if (UI::Pill("Frame", m_ProfilerTab == 0))
@@ -886,38 +915,26 @@ namespace Lucerna {
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip(hasReference ? "Remove the comparison column" : "Keep the visible averages and compare everything against them");
 		ImGui::SameLine();
-		if (UI::Pill(liveLabel, !m_ProfilerLive)) {
-			if (m_ProfilerLive) {
-				m_ProfilerLive = false;
-				m_ProfilerEnd = static_cast<double>(range.End);
-			}
-			else
-				goLive();
-		}
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip(m_ProfilerLive ? "Stop following the present: recording goes on" : "Follow the present again (Esc)");
+		if (UI::Pill(liveLabel, !m_ProfilerLive))
+			toggleLive();
+		ActionTooltip(m_ProfilerLive ? "profiler.live" : "profiler.back_to_live",
+			m_ProfilerLive ? "Stop following the present: recording goes on" : "Follow the present again");
 		ImGui::SameLine();
-		// i preset dello zoom, in tempo: contano all'indietro dalla fine della vista
 		ImGui::SetNextItemWidth(comboW);
 		char preview[64];
 		snprintf(preview, sizeof(preview), "%s \xc2\xb7 %zu frames", FormatDuration(range.DurationMs).c_str(), range.Frames.size());
 		if (ImGui::BeginCombo("##span", preview)) {
-			const double presets[] = { 2000.0, 10000.0, 60000.0, 0.0 };
 			const char* names[] = { "2 s", "10 s", "1 min", "All history" };
-			for (int i = 0; i < 4; i++)
-				if (ImGui::Selectable(names[i])) {
-					double frames = static_cast<double>(Profiler::MaxFrames), ms = 0.0;
-					if (presets[i] > 0.0)
-						for (uint64_t f = range.End; f > range.First; f--) {
-							ms += history[f - 1 - range.First].FrameMs;
-							if (ms >= presets[i]) {
-								frames = static_cast<double>(range.End - f + 1);
-								break;
-							}
-						}
-					m_ProfilerSpan = std::max(frames, MIN_SPAN);
-					m_ProfilerStatsDirty = true;
+			const char* ids[] = { "profiler.zoom_2s", "profiler.zoom_10s", "profiler.zoom_1min", "profiler.zoom_all" };
+			for (int i = 0; i < 4; i++) {
+				const std::string key = Keymap::Format(m_Keymap.Key(ids[i]));
+				if (ImGui::Selectable(names[i]))
+					zoom(i);
+				if (!key.empty()) {
+					ImGui::SameLine();
+					ImGui::TextDisabled("%s", key.c_str());
 				}
+			}
 			ImGui::EndCombo();
 		}
 		ImGui::Separator();

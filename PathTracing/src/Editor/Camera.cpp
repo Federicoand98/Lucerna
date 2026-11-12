@@ -28,7 +28,7 @@ namespace Lucerna {
 		RecalculateView();
 	}
 
-	bool Camera::OnUpdate(float ts) {
+	bool Camera::OnUpdate(float ts, const CameraKeys& keys) {
 		glm::vec2 mousePos = Input::GetMousePosition();
 		glm::vec2 delta = (mousePos - m_LastMousePosition) * 0.002f;
 		m_LastMousePosition = mousePos;
@@ -48,27 +48,27 @@ namespace Lucerna {
 		float speed = 5.0f;
 
 		// Movement
-		if (Input::IsKeyDown(KeyCode::W)) {
+		if (keys.Forward) {
 			m_Position += m_ForwardDirection * speed * ts;
 			moved = true;
-		} else if (Input::IsKeyDown(KeyCode::S)) {
+		} else if (keys.Back) {
 			m_Position -= m_ForwardDirection * speed * ts;
 			moved = true;
 		}
 
-		if (Input::IsKeyDown(KeyCode::A)) {
+		if (keys.Left) {
 			m_Position -= rightDirection * speed * ts;
 			moved = true;
-		} else if (Input::IsKeyDown(KeyCode::D)) {
+		} else if (keys.Right) {
 			m_Position += rightDirection * speed * ts;
 			moved = true;
 		}
 
 		// Q/E: alza/abbassa la camera lungo l'asse verticale del mondo (in questo motore e' Y)
-		if (Input::IsKeyDown(KeyCode::Q)) {
+		if (keys.Up) {
 			m_Position += upDirection * speed * ts;
 			moved = true;
-		} else if (Input::IsKeyDown(KeyCode::E)) {
+		} else if (keys.Down) {
 			m_Position -= upDirection * speed * ts;
 			moved = true;
 		}
